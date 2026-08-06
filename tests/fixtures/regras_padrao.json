@@ -1,0 +1,146 @@
+[
+  {
+    "id": "r001",
+    "nome": "PIX recebido",
+    "condicao_json": {
+      "descricao_contains_any": ["PIX RECEBIDO", "RECEBIMENTO PIX", "TED RECEBIDA", "DOC RECEBIDO"],
+      "tipo_lancamento": "credito"
+    },
+    "categoria": "Receitas Diversas",
+    "conta_debito": "1.1.01.002",
+    "conta_credito": "3.2.01.001",
+    "prioridade": 1
+  },
+  {
+    "id": "r002",
+    "nome": "Tarifa bancária",
+    "condicao_json": {
+      "descricao_contains_any": ["TARIFA", "TAR ", "MANUT CONTA", "PACOTE SERVICOS", "ANUIDADE"]
+    },
+    "categoria": "Despesas Bancárias",
+    "conta_debito": "4.1.01.010",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 2
+  },
+  {
+    "id": "r003",
+    "nome": "IOF",
+    "condicao_json": {
+      "descricao_contains_any": ["IOF", "I.O.F"]
+    },
+    "categoria": "Despesas Bancárias",
+    "conta_debito": "4.1.01.010",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 2
+  },
+  {
+    "id": "r010",
+    "nome": "Posto de combustível",
+    "condicao_json": {
+      "descricao_contains_any": ["POSTO", "PETROBRAS", "SHELL", "IPIRANGA", "BR DIST", "COMBUSTIVEL", "GASOLINA", "ETANOL", "DISTRIBUIDORA"]
+    },
+    "categoria": "Combustível",
+    "conta_debito": "4.1.01.003",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r011",
+    "nome": "Farmácia / Drogaria",
+    "condicao_json": {
+      "descricao_contains_any": ["DROGASIL", "DROGA RAIA", "ULTRAFARMA", "PACHECO", "DROGARIA", "FARMACIA", "FARMA", "DROGAS"]
+    },
+    "categoria": "Saúde",
+    "conta_debito": "4.1.01.004",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r012",
+    "nome": "Plano de saúde",
+    "condicao_json": {
+      "descricao_contains_any": ["UNIMED", "AMIL", "BRADESCO SAUDE", "SULAMERICA SAUDE", "HAPVIDA", "NOTREDAME", "PLANO DE SAUDE"]
+    },
+    "categoria": "Saúde",
+    "conta_debito": "4.1.01.004",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r013",
+    "nome": "Supermercado",
+    "condicao_json": {
+      "descricao_contains_any": ["SUPERMERCADO", "SUPERMERC", "MERCADO", "CARREFOUR", "EXTRA", "ATACADAO", "ASSAI", "WALMART", "BIG ", "PREZUNIC", "GUANABARA", "BOMPRECO", "BOM PRECO", "HORTIFRUTI"]
+    },
+    "categoria": "Alimentação",
+    "conta_debito": "4.1.01.001",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r014",
+    "nome": "Restaurante / Delivery",
+    "condicao_json": {
+      "descricao_contains_any": ["IFOOD", "RAPPI", "UBER EATS", "RESTAURANTE", "LANCHONETE", "PADARIA", "PIZZARIA", "HAMBURGER", "BURGUER", "MCDONALDS", "SUBWAY", "KFC", "BURGER"]
+    },
+    "categoria": "Alimentação",
+    "conta_debito": "4.1.01.001",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r015",
+    "nome": "Uber / 99 / Taxi",
+    "condicao_json": {
+      "descricao_contains_any": ["UBER", "99APP", "99 TAXI", "CABIFY", "TAXI", "INDRIVER"]
+    },
+    "categoria": "Transporte",
+    "conta_debito": "4.1.01.002",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r016",
+    "nome": "Software e assinaturas digitais",
+    "condicao_json": {
+      "descricao_contains_any": ["AMAZON", "AWS", "GOOGLE", "MICROSOFT", "APPLE", "NETFLIX", "SPOTIFY", "GITHUB", "OPENAI", "ANTHROPIC", "DIGITALOCEAN", "VERCEL", "CLOUDFLARE", "HEROKU"]
+    },
+    "categoria": "Serviços de Software / SaaS",
+    "conta_debito": "4.1.01.006",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r017",
+    "nome": "Educação",
+    "condicao_json": {
+      "descricao_contains_any": ["UDEMY", "COURSERA", "ALURA", "ROCKETSEAT", "ESCOLA", "FACULDADE", "UNIVERSIDADE", "MENSALIDADE ESCOLAR"]
+    },
+    "categoria": "Educação",
+    "conta_debito": "4.1.01.005",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r018",
+    "nome": "Energia elétrica",
+    "condicao_json": {
+      "descricao_contains_any": ["CPFL", "CEMIG", "LIGHT ", "ENEL", "ELEKTRO", "ENERGIA ELETRICA", "COPEL", "CELPE", "COELBA", "ENERGISA"]
+    },
+    "categoria": "Utilidades (Água/Luz/Tel)",
+    "conta_debito": "4.1.01.008",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  },
+  {
+    "id": "r019",
+    "nome": "Telefone / Internet",
+    "condicao_json": {
+      "descricao_contains_any": ["CLARO", "VIVO", "TIM ", "OI ", "NET ", "NEXTEL", "VIRTUA", "SKY ", "BRISANET", "ALGAR"]
+    },
+    "categoria": "Utilidades (Água/Luz/Tel)",
+    "conta_debito": "4.1.01.008",
+    "conta_credito": "1.1.01.002",
+    "prioridade": 10
+  }
+]

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "nome_canonico": "SUPERMERCADO BOM PREÇO",
+    "categoria": "supermercado",
+    "conta_debito_padrao": "4.1.01.001",
+    "conta_credito_padrao": "1.1.01.002",
+    "aliases": [
+      "SUP BOMPRECO",
+      "BOM PRECO",
+      "BOMPRECO",
+      "SUPERMERCADO BOMPRECO"
+    ]
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "nome_canonico": "UBER",
+    "categoria": "transporte",
+    "conta_debito_padrao": "4.1.01.002",
+    "conta_credito_padrao": "1.1.01.002",
+    "aliases": [
+      "UBER *TRIP",
+      "UBER VIAGEM",
+      "UBER DO BRASIL"
+    ]
+  }
+]
