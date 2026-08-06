@@ -120,7 +120,7 @@ def _parsear_nubank(filepath: Path) -> Iterator[DocumentoFinanceiro]:
                 if not descricao:
                     continue
 
-                yield _criar_documento(filepath, data, valor, descricao, "nubank")
+                yield _criar_documento(filepath, data, -valor, descricao, "nubank")
             except (ValueError, InvalidOperation, KeyError):
                 continue
 
@@ -193,8 +193,8 @@ def _criar_documento(
         nome_arquivo=filepath.name,
         hash_sha256=hash_doc,
         data_emissao=data,
-        valor_total=abs(valor),
-        valor_liquido=abs(valor),
+        valor_total=Dinheiro(abs(valor)),
+        valor_liquido=Dinheiro(abs(valor)),
         nome_emitente=descricao.upper().strip(),
         fonte_extracao=FonteExtracao.CSV,
         confidence_scores=[ConfidenceScore(1.0, "valor"), ConfidenceScore(1.0, "data"), ConfidenceScore(0.90, "descricao")],

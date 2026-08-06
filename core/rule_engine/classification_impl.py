@@ -13,6 +13,7 @@ from core.domain.entities import (
     CodigoConta,
     Documento,
     Fornecedor,
+    NaturezaLancamento,
     RegraClassificacao,
 )
 from core.ports.classification import (
@@ -161,9 +162,9 @@ class RegrasDeterministicasPlugin:
 
         if "tipo_lancamento" in c:
             tipo = c["tipo_lancamento"]
-            if tipo == "credito" and documento.natureza_operacao != "entrada":
+            if tipo == "credito" and documento.natureza_operacao != NaturezaLancamento.CREDITO:
                 return False
-            if tipo == "debito" and documento.natureza_operacao != "saida":
+            if tipo == "debito" and documento.natureza_operacao != NaturezaLancamento.DEBITO:
                 return False
 
         if "fornecedor_categoria" in c and fornecedor:
