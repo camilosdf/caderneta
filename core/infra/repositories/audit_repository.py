@@ -90,14 +90,26 @@ class AuditRepository:
 
     # ── Leitura ──────────────────────────────────────────────────────────
 
-    def buscar_por_documento(self, documento_hash: str) -> Optional[dict]:
-        """Compatível com AuditChain.buscar_por_hash_documento()."""
+    def buscar_por_documento(
+        self,
+        documento_hash: str,
+        empresa_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Compatível com AuditChain.buscar_por_hash_documento().
+
+        Quando empresa_id é informado, a deduplicação é isolada por empresa —
+        o mesmo conteúdo de arquivo processado por empresas diferentes não
+        deve colidir. Sem empresa_id, mantém o comportamento antigo (busca
+        global), usado por chamadores legados que ainda não passam o filtro.
+        """
         stmt = (
             select(AuditEventoORM)
             .where(AuditEventoORM.documento_hash == documento_hash)
-            .order_by(AuditEventoORM.timestamp)
-            .limit(1)
         )
+        if empresa_id is not None:
+            stmt = stmt.where(AuditEventoORM.empresa_id == empresa_id)
+        stmt = stmt.order_by(AuditEventoORM.timestamp).limit(1)
+
         orm = self._session.execute(stmt).scalar_one_or_none()
         if orm is None:
             return None

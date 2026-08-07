@@ -104,11 +104,20 @@ def _classification_port():
     return RegrasDeterministicasPlugin(regras=regras, fornecedores=[])
 
 
-def _construir_use_case(session_factory, pasta_saida: Path):
+def _construir_use_case(session_factory, pasta_saida: Path, empresa: str):
     from core.adapters.csv_exporter import ExportadorCSV
     from core.application.use_cases.processar_documento import ProcessarDocumentoUseCase
+    from core.infra.unit_of_work import UnitOfWork
     from core.parsers.detector import DetectorDocumento
     from core.pipeline.parser_factory import ParserFactory
+    from core.rule_engine.lancamento_service import LancamentoService
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    with UnitOfWork(session_factory) as uow:
+        periodos = uow.periodos.mapa_por_competencia(empresa_id)
+
+    lancamento_service = LancamentoService(periodos_por_competencia=periodos)
 
     return ProcessarDocumentoUseCase(
         detector=DetectorDocumento(),
@@ -119,6 +128,7 @@ def _construir_use_case(session_factory, pasta_saida: Path):
         event_bus=_event_bus(),
         exporter=ExportadorCSV(),
         pasta_saida=pasta_saida,
+        lancamento_service=lancamento_service,
     )
 
 
@@ -155,7 +165,7 @@ def processar(
         raise typer.Exit(0)
 
     session_factory = _session_factory(datalake)
-    use_case = _construir_use_case(session_factory, saida)
+    use_case = _construir_use_case(session_factory, saida, empresa)
 
     sucesso = falha = revisao = 0
 
@@ -345,7 +355,7 @@ def dry_run(
         session_factory = SessionFactory(f"sqlite:///{tmp}/dry_run.db")
         session_factory.criar_tabelas()
         saida_tmp = Path(tmp) / "saida"
-        use_case = _construir_use_case(session_factory, saida_tmp)
+        use_case = _construir_use_case(session_factory, saida_tmp, empresa)
 
         for arquivo in arquivos:
             r = _executar_para_arquivo(use_case, arquivo, usuario, empresa)
@@ -465,13 +475,13 @@ def periodo_fechar(
 ):
     """Fecha um período contábil — bloqueia novos lançamentos na competência."""
     from core.infra.unit_of_work import UnitOfWork
-    import uuid as _uuid
+    from shared.identifiers import empresa_id_from_string
 
     if not (1 <= mes <= 12):
         rprint(f"[red]Mês inválido: {mes}. Use 1-12.[/red]")
         raise typer.Exit(1)
 
-    empresa_id = _uuid.uuid5(_uuid.NAMESPACE_DNS, empresa)
+    empresa_id = empresa_id_from_string(empresa)
     session_factory = _session_factory(datalake)
 
     try:
@@ -503,13 +513,13 @@ def periodo_abrir(
 ):
     """Garante que um período contábil existe e está aberto."""
     from core.infra.unit_of_work import UnitOfWork
-    import uuid as _uuid
+    from shared.identifiers import empresa_id_from_string
 
     if not (1 <= mes <= 12):
         rprint(f"[red]Mês inválido: {mes}. Use 1-12.[/red]")
         raise typer.Exit(1)
 
-    empresa_id = _uuid.uuid5(_uuid.NAMESPACE_DNS, empresa)
+    empresa_id = empresa_id_from_string(empresa)
     session_factory = _session_factory(datalake)
 
     with UnitOfWork(session_factory) as uow:
@@ -531,9 +541,9 @@ def periodo_listar(
 ):
     """Lista os períodos contábeis cadastrados para a empresa."""
     from core.infra.unit_of_work import UnitOfWork
-    import uuid as _uuid
+    from shared.identifiers import empresa_id_from_string
 
-    empresa_id = _uuid.uuid5(_uuid.NAMESPACE_DNS, empresa)
+    empresa_id = empresa_id_from_string(empresa)
     session_factory = _session_factory(datalake)
 
     with UnitOfWork(session_factory) as uow:

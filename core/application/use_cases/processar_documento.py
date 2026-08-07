@@ -31,6 +31,7 @@ from core.rule_engine.lancamento_service import (
     ContaNaoLancavelError,
     LancamentoService,
 )
+from shared.identifiers import empresa_id_from_string
 
 
 @dataclass
@@ -100,7 +101,7 @@ class ProcessarDocumentoUseCase:
                 # ── 1. Hash e deduplicação ──────────────────────────
                 hash_doc = self._detector.calcular_hash(cmd.filepath)
 
-                duplicata = uow.audit.buscar_por_documento(hash_doc)
+                duplicata = uow.audit.buscar_por_documento(hash_doc, empresa_id=cmd.empresa_id)
                 if duplicata:
                     self._bus.publicar(DocumentoDuplicado(
                         correlacao_id=correlacao,
@@ -139,6 +140,15 @@ class ProcessarDocumentoUseCase:
                 if not documentos:
                     resultado.erros.append("Nenhuma transação encontrada no arquivo.")
                     return resultado
+
+                # Parsers não conhecem o contexto de negócio (empresa) — o
+                # use case é quem sabe a qual empresa este processamento
+                # pertence. Sobrescreve o empresa_id aleatório do parser
+                # pelo identificador real do comando, para que Documento,
+                # Lancamento e PeriodoContabil fiquem consistentes.
+                empresa_id = empresa_id_from_string(cmd.empresa_id)
+                for doc in documentos:
+                    doc.empresa_id = empresa_id
 
                 for doc in documentos:
                     self._bus.publicar(DocumentoParseado(
