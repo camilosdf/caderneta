@@ -324,6 +324,45 @@ class Fornecedor:
             self.ultima_ocorrencia = data
 
 
+@dataclass(frozen=True)
+class MetadadosNFe:
+    """Value Object com campos fiscais específicos de NF-e.
+
+    Separado de Documento para não inflar a entidade central com
+    campos irrelevantes para OFX/CSV/PDF.
+    """
+    chave_acesso: str                          # 44 dígitos — unicidade e auditoria
+    finalidade: int                            # 1=normal 2=complementar 3=ajuste 4=devolução
+    natureza_operacao_texto: str               # <natOp> — texto livre
+    cfop_itens: tuple[str, ...]                # CFOPs de todos os itens
+    ncm_itens: tuple[str, ...]                 # NCMs de todos os itens
+    cst_icms: Optional[str]                    # CST ou CSOSN predominante
+    cnpj_destinatario: Optional[CNPJ]
+    valor_icms: Dinheiro
+    valor_pis: Dinheiro
+    valor_cofins: Dinheiro
+    valor_ipi: Dinheiro
+
+    @property
+    def e_devolucao(self) -> bool:
+        return self.finalidade == 4
+
+    @property
+    def e_complementar(self) -> bool:
+        return self.finalidade == 2
+
+    @property
+    def cfop_predominante(self) -> Optional[str]:
+        """CFOP mais frequente nos itens."""
+        if not self.cfop_itens:
+            return None
+        return max(set(self.cfop_itens), key=self.cfop_itens.count)
+
+    @property
+    def total_tributos(self) -> Dinheiro:
+        return self.valor_icms + self.valor_pis + self.valor_cofins + self.valor_ipi
+
+
 @dataclass
 class Documento:
     """Documento financeiro recebido para processamento."""
@@ -346,6 +385,8 @@ class Documento:
     numero_documento: Optional[str] = None
     cfop: Optional[str] = None
     natureza_operacao: Optional[NaturezaLancamento] = None
+
+    metadados_nfe: Optional[MetadadosNFe] = None
 
     confidence_scores: list[ConfidenceScore] = field(default_factory=list)
     precisa_revisao: bool = False
