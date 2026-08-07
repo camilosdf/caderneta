@@ -235,3 +235,22 @@ class PeriodoContabilORM(Base):
 
     def __repr__(self) -> str:
         return f"<PeriodoContabilORM {self.ano}/{self.mes:02d} status={self.status}>"
+
+
+class CentroCustoORM(Base):
+    """Persiste CentroCusto — dimensão de rateio/análise de despesas."""
+
+    __tablename__ = "centros_custo"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    codigo: Mapped[str] = mapped_column(String(50), nullable=False)
+    nome: Mapped[str] = mapped_column(String(200), nullable=False)
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "codigo", name="uq_centro_custo_empresa_codigo"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CentroCustoORM {self.codigo} ativo={self.ativo}>"

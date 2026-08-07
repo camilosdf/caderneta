@@ -1,5 +1,6 @@
 from core.infra.db.models import (  # noqa: F401
     AuditEventoORM,
+    CentroCustoORM,
     DocumentoORM,
     LancamentoORM,
     PeriodoContabilORM,
@@ -16,4 +17,5 @@ __all__ = [
     "SplitORM",
     "AuditEventoORM",
     "PeriodoContabilORM",
+    "CentroCustoORM",
 ]

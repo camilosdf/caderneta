@@ -116,8 +116,12 @@ def _construir_use_case(session_factory, pasta_saida: Path, empresa: str):
     empresa_id = empresa_id_from_string(empresa)
     with UnitOfWork(session_factory) as uow:
         periodos = uow.periodos.mapa_por_competencia(empresa_id)
+        centros = uow.centros_custo.mapa_por_codigo(empresa_id)
 
-    lancamento_service = LancamentoService(periodos_por_competencia=periodos)
+    lancamento_service = LancamentoService(
+        periodos_por_competencia=periodos,
+        centros_por_codigo=centros,
+    )
 
     return ProcessarDocumentoUseCase(
         detector=DetectorDocumento(),
@@ -571,6 +575,129 @@ def periodo_listar(
         )
 
     console.print(tabela)
+
+
+# =============================================================
+# CENTRO DE CUSTO
+# =============================================================
+
+centro_custo_app = typer.Typer(help="Gerencia centros de custo.")
+app.add_typer(centro_custo_app, name="centro-custo")
+
+
+@centro_custo_app.command(name="criar")
+def centro_custo_criar(
+    codigo: Annotated[str, typer.Argument(help="Código do centro de custo (ex: CC-VENDAS)")],
+    nome: Annotated[str, typer.Argument(help="Nome descritivo")],
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Cria um novo centro de custo para a empresa."""
+    from core.infra.repositories.centro_custo_repository import CentroCustoJaExisteError
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    try:
+        with UnitOfWork(session_factory) as uow:
+            uow.centros_custo.criar(empresa_id, codigo, nome)
+            uow.commit()
+    except CentroCustoJaExisteError as e:
+        rprint(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)
+
+    rprint(Panel(
+        f"[bold green]✅ Centro de custo criado[/bold green]\n\n"
+        f"Código: [cyan]{codigo}[/cyan]\n"
+        f"Nome:   [cyan]{nome}[/cyan]\n"
+        f"Empresa: [dim]{empresa}[/dim]",
+        border_style="green",
+        title="Centro de Custo",
+    ))
+
+
+@centro_custo_app.command(name="listar")
+def centro_custo_listar(
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+    apenas_ativos: Annotated[bool, typer.Option("--apenas-ativos")] = False,
+):
+    """Lista os centros de custo cadastrados para a empresa."""
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    with UnitOfWork(session_factory) as uow:
+        centros = uow.centros_custo.listar_por_empresa(empresa_id, apenas_ativos=apenas_ativos)
+
+    if not centros:
+        rprint("[dim]Nenhum centro de custo cadastrado ainda.[/dim]")
+        return
+
+    tabela = Table(title="Centros de Custo", show_header=True, header_style="bold")
+    tabela.add_column("Código")
+    tabela.add_column("Nome")
+    tabela.add_column("Status")
+
+    for c in centros:
+        status_str = "[green]ativo[/green]" if c.ativo else "[red]inativo[/red]"
+        tabela.add_row(c.codigo, c.nome, status_str)
+
+    console.print(tabela)
+
+
+@centro_custo_app.command(name="desativar")
+def centro_custo_desativar(
+    codigo: Annotated[str, typer.Argument(help="Código do centro de custo")],
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Desativa um centro de custo — impede seu uso em novos lançamentos."""
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    with UnitOfWork(session_factory) as uow:
+        centro = uow.centros_custo.buscar_por_codigo(empresa_id, codigo)
+        if centro is None:
+            rprint(f"[red]Centro de custo '{codigo}' não encontrado.[/red]")
+            raise typer.Exit(1)
+        centro.ativo = False
+        uow.centros_custo.salvar(centro)
+        uow.commit()
+
+    rprint(f"[yellow]⚠  Centro de custo '{codigo}' desativado.[/yellow]")
+
+
+@centro_custo_app.command(name="ativar")
+def centro_custo_ativar(
+    codigo: Annotated[str, typer.Argument(help="Código do centro de custo")],
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Reativa um centro de custo previamente desativado."""
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    with UnitOfWork(session_factory) as uow:
+        centro = uow.centros_custo.buscar_por_codigo(empresa_id, codigo)
+        if centro is None:
+            rprint(f"[red]Centro de custo '{codigo}' não encontrado.[/red]")
+            raise typer.Exit(1)
+        centro.ativo = True
+        uow.centros_custo.salvar(centro)
+        uow.commit()
+
+    rprint(f"[green]✅ Centro de custo '{codigo}' ativado.[/green]")
 
 
 # =============================================================
