@@ -238,3 +238,154 @@ class TestNormalizacao:
         from core.ports.classification import ClassificationPort
         clf = RegrasDeterministicasPlugin(regras=[], fornecedores=[])
         assert isinstance(clf, ClassificationPort)
+
+
+# =============================================================
+# CLASSIFICAÇÃO POR CONDIÇÕES NF-e
+# =============================================================
+
+def _doc_nfe(
+    cfop_itens: tuple = ("5102",),
+    ncm_itens: tuple = ("84713012",),
+    cst: str = "00",
+    finalidade: int = 1,
+    nat_op: str = "Venda",
+) -> Documento:
+    from core.domain.entities import (
+        CNPJ, CodigoConta, Dinheiro, MetadadosNFe, TipoDocumento, FonteExtracao,
+        NaturezaLancamento,
+    )
+    from decimal import Decimal
+
+    meta = MetadadosNFe(
+        chave_acesso="35240312345678000195550010000000011000000011",
+        finalidade=finalidade,
+        natureza_operacao_texto=nat_op,
+        cfop_itens=cfop_itens,
+        ncm_itens=ncm_itens,
+        cst_icms=cst,
+        cnpj_destinatario=None,
+        valor_icms=Dinheiro(Decimal("0")),
+        valor_pis=Dinheiro(Decimal("0")),
+        valor_cofins=Dinheiro(Decimal("0")),
+        valor_ipi=Dinheiro(Decimal("0")),
+    )
+    return Documento(
+        tipo=TipoDocumento.NFE_XML,
+        nome_arquivo="nfe.xml",
+        hash_sha256="abc",
+        nome_emitente="FORNECEDOR NF-e",
+        data_emissao=date(2024, 3, 15),
+        valor_total=Dinheiro(Decimal("100.00")),
+        valor_liquido=Dinheiro(Decimal("100.00")),
+        fonte_extracao=FonteExtracao.XML,
+        cfop="5102",
+        natureza_operacao=NaturezaLancamento.CREDITO,
+        metadados_nfe=meta,
+        confidence_scores=[],
+    )
+
+
+def _regra_nfe(nome: str, condicao: dict, categoria: str) -> Any:
+    from core.rule_engine.rule_entity import RegraClassificacaoV2
+    from core.domain.entities import CodigoConta
+    return RegraClassificacaoV2(
+        nome=nome,
+        condicao=condicao,
+        categoria=categoria,
+        conta_debito=CodigoConta("1.1.01.002"),
+        conta_credito=CodigoConta("3.1.01.001"),
+        prioridade=5,
+        criada_por="teste",
+    )
+
+
+class TestClassificacaoNFe:
+    def test_cfop_prefixo_venda_classifica(self) -> None:
+        regra = _regra_nfe("Venda mercadoria", {"cfop_prefixo": "51"}, "Receita de Vendas")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(cfop_itens=("5102",)), None)
+        assert resultado.categoria == "Receita de Vendas"
+
+    def test_cfop_prefixo_nao_bate(self) -> None:
+        regra = _regra_nfe("Venda mercadoria", {"cfop_prefixo": "51"}, "Receita de Vendas")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(cfop_itens=("1102",)), None)
+        assert resultado.precisa_revisao is True
+
+    def test_cfop_prefixo_sem_metadados_nao_bate(self) -> None:
+        regra = _regra_nfe("Venda", {"cfop_prefixo": "51"}, "Receita de Vendas")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        doc = _doc("QUALQUER DOC SEM NFE")
+        resultado = clf.sugerir_categoria(doc, None)
+        assert resultado.precisa_revisao is True
+
+    def test_ncm_contains_any_bate(self) -> None:
+        regra = _regra_nfe("TI", {"ncm_contains_any": ["8471"]}, "Ativo de TI")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(ncm_itens=("84713012",)), None)
+        assert resultado.categoria == "Ativo de TI"
+
+    def test_ncm_contains_any_nao_bate(self) -> None:
+        regra = _regra_nfe("TI", {"ncm_contains_any": ["8471"]}, "Ativo de TI")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(ncm_itens=("39269090",)), None)
+        assert resultado.precisa_revisao is True
+
+    def test_cst_icms_bate(self) -> None:
+        regra = _regra_nfe("Isento", {"cst_icms": "40"}, "Compra Isenta ICMS")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(cst="40"), None)
+        assert resultado.categoria == "Compra Isenta ICMS"
+
+    def test_cst_icms_nao_bate(self) -> None:
+        regra = _regra_nfe("Isento", {"cst_icms": "40"}, "Compra Isenta ICMS")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(cst="00"), None)
+        assert resultado.precisa_revisao is True
+
+    def test_e_devolucao_true_bate(self) -> None:
+        regra = _regra_nfe("Devolução", {"e_devolucao": True}, "Devolução de Venda")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(finalidade=4), None)
+        assert resultado.categoria == "Devolução de Venda"
+
+    def test_e_devolucao_false_nao_bate(self) -> None:
+        regra = _regra_nfe("Devolução", {"e_devolucao": True}, "Devolução de Venda")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(_doc_nfe(finalidade=1), None)
+        assert resultado.precisa_revisao is True
+
+    def test_combinacao_cfop_e_ncm(self) -> None:
+        """CFOP 51xx + NCM 8471 = Venda de equipamento de TI."""
+        regra = _regra_nfe(
+            "Venda TI",
+            {"cfop_prefixo": "51", "ncm_contains_any": ["8471"]},
+            "Receita Venda TI",
+        )
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(
+            _doc_nfe(cfop_itens=("5102",), ncm_itens=("84713012",)), None
+        )
+        assert resultado.categoria == "Receita Venda TI"
+
+    def test_combinacao_cfop_e_ncm_falha_se_ncm_errado(self) -> None:
+        regra = _regra_nfe(
+            "Venda TI",
+            {"cfop_prefixo": "51", "ncm_contains_any": ["8471"]},
+            "Receita Venda TI",
+        )
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(
+            _doc_nfe(cfop_itens=("5102",), ncm_itens=("39269090",)), None
+        )
+        assert resultado.precisa_revisao is True
+
+    def test_multiplos_ncm_um_bate(self) -> None:
+        """Se qualquer NCM da NF-e bater no prefixo, a regra se aplica."""
+        regra = _regra_nfe("TI", {"ncm_contains_any": ["8471"]}, "Ativo de TI")
+        clf = RegrasDeterministicasPlugin(regras=[regra], fornecedores=[])
+        resultado = clf.sugerir_categoria(
+            _doc_nfe(ncm_itens=("39269090", "84713012")), None
+        )
+        assert resultado.categoria == "Ativo de TI"

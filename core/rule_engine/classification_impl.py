@@ -171,6 +171,33 @@ class RegrasDeterministicasPlugin:
             if fornecedor.categoria != c["fornecedor_categoria"]:
                 return False
 
+        # -- Condições NF-e (requerem metadados_nfe) ----------------------
+        meta = documento.metadados_nfe
+
+        if "cfop_prefixo" in c:
+            if meta is None or meta.cfop_predominante is None:
+                return False
+            if not meta.cfop_predominante.startswith(c["cfop_prefixo"]):
+                return False
+
+        if "ncm_contains_any" in c:
+            if meta is None or not meta.ncm_itens:
+                return False
+            prefixos = c["ncm_contains_any"]
+            if not any(
+                any(ncm.startswith(p) for p in prefixos)
+                for ncm in meta.ncm_itens
+            ):
+                return False
+
+        if "cst_icms" in c:
+            if meta is None or meta.cst_icms != c["cst_icms"]:
+                return False
+
+        if "e_devolucao" in c:
+            if meta is None or meta.e_devolucao != c["e_devolucao"]:
+                return False
+
         return True
 
     def _construir_indices(self) -> None:
