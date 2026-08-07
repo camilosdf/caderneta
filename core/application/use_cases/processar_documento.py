@@ -149,6 +149,7 @@ class ProcessarDocumentoUseCase:
                 empresa_id = empresa_id_from_string(cmd.empresa_id)
                 for doc in documentos:
                     doc.empresa_id = empresa_id
+                    uow.documentos.salvar(doc)
 
                 for doc in documentos:
                     self._bus.publicar(DocumentoParseado(
@@ -191,6 +192,7 @@ class ProcessarDocumentoUseCase:
                     )
 
                     lancamentos.append(lancamento)
+                    uow.lancamentos.salvar(lancamento)
 
                     self._bus.publicar(LancamentoCriado(
                         correlacao_id=correlacao,
@@ -227,6 +229,18 @@ class ProcessarDocumentoUseCase:
                     prefixo=cmd.filepath.stem,
                     aprovado_por=cmd.usuario,
                 )
+
+                # Marca os lançamentos como exportados — habilita o comando
+                # `caderneta lancamentos listar --status exportado` e o
+                # fluxo de conciliação manual com o GnuCash.
+                from core.domain.entities import StatusLancamento
+                from datetime import datetime, timezone
+
+                agora = datetime.now(timezone.utc)
+                for lancamento in lancamentos:
+                    lancamento.status = StatusLancamento.EXPORTADO
+                    lancamento.exportado_em = agora
+                    uow.lancamentos.salvar(lancamento)
 
                 uow.audit.registrar(
                     tipo=TipoEvento.CSV_GERADO,

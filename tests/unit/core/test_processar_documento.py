@@ -490,3 +490,94 @@ class TestDeduplicacaoPorEmpresa:
         assert resultado_1.sucesso is True
         assert resultado_2.sucesso is False
         assert any("já processado" in e for e in resultado_2.erros)
+
+
+# =============================================================
+# TESTES — Persistência de Documento e Lancamento (Integração GnuCash/ERP)
+# =============================================================
+
+class TestPersistenciaPipeline:
+    def test_documento_persistido_apos_processamento(self, use_case, csv_nubank, sf):
+        from core.infra.unit_of_work import UnitOfWork
+
+        resultado = use_case.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+        assert resultado.sucesso is True
+
+        with UnitOfWork(sf) as uow:
+            from shared.identifiers import empresa_id_from_string
+            empresa_id = empresa_id_from_string("empresa-001")
+            docs = uow.documentos.listar_por_empresa(empresa_id)
+            assert len(docs) == 2  # nubank.csv tem 2 transações
+
+    def test_lancamento_persistido_apos_processamento(self, use_case, csv_nubank, sf):
+        from core.infra.unit_of_work import UnitOfWork
+        from shared.identifiers import empresa_id_from_string
+
+        use_case.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+
+        with UnitOfWork(sf) as uow:
+            empresa_id = empresa_id_from_string("empresa-001")
+            lancs = uow.lancamentos.listar_por_empresa(empresa_id)
+            assert len(lancs) == 2
+
+    def test_lancamento_status_exportado_apos_csv_gerado(self, use_case, csv_nubank, sf):
+        from core.domain.entities import StatusLancamento
+        from core.infra.unit_of_work import UnitOfWork
+        from shared.identifiers import empresa_id_from_string
+
+        use_case.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+
+        with UnitOfWork(sf) as uow:
+            empresa_id = empresa_id_from_string("empresa-001")
+            lancs = uow.lancamentos.listar_por_empresa(empresa_id)
+            assert all(l.status == StatusLancamento.EXPORTADO for l in lancs)
+
+    def test_lancamento_exportado_em_preenchido(self, use_case, csv_nubank, sf):
+        from core.infra.unit_of_work import UnitOfWork
+        from shared.identifiers import empresa_id_from_string
+
+        use_case.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+
+        with UnitOfWork(sf) as uow:
+            empresa_id = empresa_id_from_string("empresa-001")
+            lancs = uow.lancamentos.listar_por_empresa(empresa_id)
+            assert all(l.exportado_em is not None for l in lancs)
+
+    def test_documento_persistido_vincula_lancamento(self, use_case, csv_nubank, sf):
+        """O documento_id do lançamento deve corresponder a um Documento persistido."""
+        from core.infra.unit_of_work import UnitOfWork
+        from shared.identifiers import empresa_id_from_string
+
+        use_case.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+
+        with UnitOfWork(sf) as uow:
+            empresa_id = empresa_id_from_string("empresa-001")
+            lancs = uow.lancamentos.listar_por_empresa(empresa_id)
+            for lanc in lancs:
+                doc = uow.documentos.buscar_por_id(lanc.documento_id)
+                assert doc is not None
+
+    def test_nfe_documento_e_lancamento_persistidos(self, use_case, nfe_xml, sf):
+        from core.infra.unit_of_work import UnitOfWork
+        from shared.identifiers import empresa_id_from_string
+
+        use_case.executar(ComandoProcessarDocumento(
+            filepath=nfe_xml, usuario="teste", empresa_id="empresa-001",
+        ))
+
+        with UnitOfWork(sf) as uow:
+            empresa_id = empresa_id_from_string("empresa-001")
+            docs = uow.documentos.listar_por_empresa(empresa_id)
+            lancs = uow.lancamentos.listar_por_empresa(empresa_id)
+            assert len(docs) == 1
+            assert len(lancs) == 1

@@ -578,6 +578,121 @@ def periodo_listar(
 
 
 # =============================================================
+# LANÇAMENTOS (integração GnuCash/ERP)
+# =============================================================
+
+lancamentos_app = typer.Typer(help="Consulta e concilia lançamentos exportados.")
+app.add_typer(lancamentos_app, name="lancamentos")
+
+
+@lancamentos_app.command(name="listar")
+def lancamentos_listar(
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    status: Annotated[Optional[str], typer.Option(
+        "--status", help="rascunho|pendente|aprovado|rejeitado|exportado"
+    )] = None,
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+    limite: Annotated[int, typer.Option("--limite")] = 50,
+):
+    """Lista lançamentos persistidos — visibilidade do que foi gerado e exportado."""
+    from core.domain.entities import StatusLancamento
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    status_filtro = None
+    if status:
+        try:
+            status_filtro = StatusLancamento(status)
+        except ValueError:
+            rprint(
+                f"[red]Status inválido: '{status}'. "
+                f"Use: {', '.join(s.value for s in StatusLancamento)}[/red]"
+            )
+            raise typer.Exit(1)
+
+    with UnitOfWork(session_factory) as uow:
+        lancamentos = uow.lancamentos.listar_por_empresa(
+            empresa_id, status=status_filtro, limit=limite,
+        )
+
+    if not lancamentos:
+        rprint("[dim]Nenhum lançamento encontrado.[/dim]")
+        return
+
+    tabela = Table(title="Lançamentos", show_header=True, header_style="bold")
+    tabela.add_column("ID", width=10)
+    tabela.add_column("Data")
+    tabela.add_column("Descrição", width=30)
+    tabela.add_column("Valor", justify="right")
+    tabela.add_column("Status")
+    tabela.add_column("GUID GnuCash", width=12)
+
+    for l in lancamentos:
+        status_cor = {
+            "exportado": "cyan",
+            "aprovado": "green",
+            "rejeitado": "red",
+            "pendente": "yellow",
+        }.get(l.status.value, "white")
+        tabela.add_row(
+            str(l.id)[:8],
+            l.data_lancamento.strftime("%Y-%m-%d") if l.data_lancamento else "—",
+            l.descricao[:30],
+            f"R$ {l.valor_total.valor:,.2f}" if l.splits else "—",
+            f"[{status_cor}]{l.status.value}[/{status_cor}]",
+            str(l.guid_gnucash)[:8] if l.guid_gnucash else "—",
+        )
+
+    console.print(tabela)
+
+
+@lancamentos_app.command(name="vincular-guid")
+def lancamentos_vincular_guid(
+    lancamento_id: Annotated[str, typer.Argument(help="ID (completo ou prefixo) do lançamento")],
+    guid: Annotated[str, typer.Argument(help="GUID gerado pelo GnuCash após importação")],
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Vincula manualmente o GUID do GnuCash a um lançamento já exportado.
+
+    Use após importar o CSV no GnuCash e conferir o GUID gerado — completa
+    a trilha de conciliação entre Caderneta e GnuCash.
+    """
+    from uuid import UUID
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    try:
+        lanc_uuid = UUID(lancamento_id)
+    except ValueError:
+        rprint(f"[red]ID inválido: '{lancamento_id}'. Informe o UUID completo.[/red]")
+        raise typer.Exit(1)
+
+    with UnitOfWork(session_factory) as uow:
+        lancamento = uow.lancamentos.buscar_por_id(lanc_uuid)
+        if lancamento is None:
+            rprint(f"[red]Lançamento não encontrado: {lancamento_id}[/red]")
+            raise typer.Exit(1)
+        lancamento.guid_gnucash = guid
+        uow.lancamentos.salvar(lancamento)
+        uow.commit()
+
+    rprint(Panel(
+        f"[bold green]✅ GUID vinculado[/bold green]\n\n"
+        f"Lançamento: [dim]{lancamento_id}[/dim]\n"
+        f"GUID GnuCash: [cyan]{guid}[/cyan]",
+        border_style="green",
+        title="Conciliação GnuCash",
+    ))
+
+
+# =============================================================
 # CENTRO DE CUSTO
 # =============================================================
 
