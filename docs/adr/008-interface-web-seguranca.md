@@ -1,9 +1,11 @@
 # ADR 008 — Interface Web e Segurança do MVP
 
-**Status:** Proposto — aguardando revisão da equipe multidisciplinar antes do W1
-**Data:** 2026-08
-**Decisores:** Equipe multidisciplinar (revisão pendente: Internal Controls
-Specialist, Senior Accountant CRC, DevOps)
+**Status:** Aceito
+**Data:** 2026-08 (proposto e revisado em 2026-08; ratificado em 2026-08)
+**Decisores:** Equipe multidisciplinar — Internal Controls Specialist,
+Senior Accountant CRC, Arquiteto de Software. Duas rodadas de parecer
+técnico incorporadas ao texto; ratificação final concedida pelo Product
+Owner (Camilo).
 
 ---
 
@@ -21,8 +23,9 @@ etapa criaria uma superfície nova — autenticação, sessões, mutação de da
 contábeis via HTTP — sem as mesmas garantias de isolamento e auditabilidade
 que o resto do sistema tem.
 
-Este ADR precede qualquer código. A implementação (W1–W4) só começa após
-revisão desta proposta.
+Este ADR precedeu qualquer código — a implementação (W1–W4) só começa
+após esta decisão estar registrada e aceita, o que ocorre com este
+documento.
 
 ---
 
@@ -41,7 +44,7 @@ api/
 ├── dependencies.py          # DI: sessão de banco, usuário atual, RBAC
 ├── auth/
 │   ├── security.py          # hash de senha (Argon2id), verificação
-│   └── session.py           # sessão via cookie assinado
+│   └── session.py           # autenticação — mecanismo definido no W1 (Seção 6)
 ├── routers/
 │   ├── auth.py              # login / logout
 │   └── lancamentos.py       # fila de aprovação
@@ -77,12 +80,19 @@ Novo grupo opcional no `pyproject.toml`: `web` (não faz parte de `core` nem
 que já separa `core` de `ai`).
 
 Dependências previstas: `fastapi`, `uvicorn`, `jinja2`, `python-multipart`
-(forms de login), `itsdangerous` (assinatura de cookie de sessão),
-`argon2-cffi` (hash de senha).
+(forms de login), `argon2-cffi` (hash de senha), mais **uma** dependência
+de autenticação a decidir no W1 conforme Seção 6 — `itsdangerous` se
+cookie assinado, ou uma biblioteca JWT (ex.: `pyjwt`) se token stateless.
 
 Processo separado da CLI: `uvicorn api.main:app`. A CLI (Typer) continua
 existindo e funcionando de forma independente — a interface web é aditiva,
 não substitui o fluxo `caderneta processar` + CSV manual.
+
+Quando a documentação OpenAPI estiver habilitada (ambiente de
+desenvolvimento apenas — ver Seção 8), cada rota deve declarar os papéis
+exigidos de forma visível no Swagger (ex.: `require_role='contador'`
+refletido na descrição do endpoint), para facilitar testes manuais durante
+o desenvolvimento.
 
 ### 3. HTMX — sem SPA
 
@@ -138,30 +148,65 @@ domínio): `operador`, `contador`, `supervisor`, `admin`.
 `api/dependencies.py` expõe `require_role(*papeis)` como FastAPI dependency.
 Toda rota que muta dados declara explicitamente os papéis mínimos exigidos.
 
-### 6. Sessões autenticadas
+### 6. Autenticação — requisito arquitetural, tecnologia não fixada
 
-Cookie de sessão assinado (`itsdangerous` via `Starlette SessionMiddleware`),
-contendo `usuario_id`, `emitido_em`, `expira_em` — **não JWT**. Justificativa:
-simplicidade operacional para o estágio atual do projeto (uso interno,
-single-tenant por instância); não há necessidade de token portável entre
-serviços ainda.
+**Revisado após parecer da equipe multidisciplinar (2026-08):** a primeira
+versão deste ADR fixava cookie de sessão assinado como mecanismo único.
+Isso amarra uma decisão de arquitetura a um detalhe de implementação sem
+necessidade — o que importa é a propriedade garantida, não a tecnologia
+específica.
+
+**Requisito arquitetural:** o mecanismo de autenticação deve fornecer:
+- identidade verificável (não forjável pelo cliente);
+- expiração;
+- integridade criptográfica.
+
+A implementação inicial (W1) pode usar **JWT** ou **cookie de sessão
+assinado**, desde que satisfaça os três requisitos acima. Se optar por
+cookie, usar flags `HttpOnly; Secure; SameSite=Strict`. Essa escolha é uma
+decisão de implementação do W1, não deste ADR.
 
 - Expiração por inatividade: 30 minutos (configurável).
-- Logout explícito invalida o cookie do lado do cliente.
-- Sem tabela de sessões no banco no MVP — reavaliar se surgir necessidade de
-  revogação forçada de sessões ativas (ex.: usuário desligado).
+- **Logout:**
+  - Se a implementação usar sessão com estado no servidor: logout invalida
+    imediatamente.
+  - Se a implementação usar token stateless (ex.: JWT): invalidação
+    imediata no logout exige mecanismo adicional (blacklist ou lista de
+    revogação). Isso é **débito técnico conhecido e aceito para o MVP**,
+    não bloqueante — documentar explicitamente na implementação se essa
+    rota for escolhida.
 
 ### 7. Integração obrigatória com o Audit Log
 
 Toda mutação relevante grava evento via `AuditRepository`, dentro da mesma
-`UnitOfWork` da operação — sem exceção. Novos tipos de evento necessários
-em `TipoEvento` (`core/audit/chain.py`):
+`UnitOfWork` da operação — sem exceção. Além dos campos já existentes em
+`EventoAuditoria`, o payload de eventos originados na Interface Web deve
+incluir:
+
+- `papel` — o papel do usuário no momento da ação (não apenas `usuario`),
+  para permitir auditar futuramente se, por exemplo, uma aprovação de alto
+  valor foi feita por alguém com o papel adequado no momento do fato.
+- `authentication_id` — identificador da autenticação usada (ex.:
+  `session_id` se sessão com estado, `jti` se JWT, ou equivalente). Nome
+  genérico deliberado — não amarra o ADR à tecnologia escolhida na Seção 6.
+
+Novos tipos de evento necessários em `TipoEvento` (`core/audit/chain.py`):
 
 - `USUARIO_LOGIN`
 - `USUARIO_LOGOUT`
 
 (`LANCAMENTO_APROVADO` e `LANCAMENTO_REJEITADO` já existem no catálogo,
 prontos para uso — nunca foram conectados a nenhum fluxo real até agora.)
+
+**Justificativa da ação (aprovação/rejeição):**
+- Aprovação rotineira (dentro da alçada normal do papel): justificativa
+  **opcional**.
+- Rejeição: justificativa **obrigatória**.
+- Aprovação excepcional (alto valor, override de política): justificativa
+  **obrigatória**.
+
+Essa distinção evita atrito operacional em aprovações rotineiras sem
+perder rastreabilidade nos casos que mais importam para auditoria.
 
 ### 8. Proibição de mutação sem autenticação
 
@@ -197,13 +242,77 @@ Este princípio vale independentemente de quantos papéis existirem — se um
 papel novo for adicionado em ADR futuro, nenhuma rota da API deveria
 precisar mudar, porque a autorização nunca esteve na camada Web.
 
+**Corolário — proteção contra falsificação de identidade:** o servidor
+jamais confia em `usuario_id`, `papel`, ou qualquer atributo de autorização
+enviado pelo cliente (seja em body, query string, ou header manipulável).
+Toda identidade usada pelo domínio vem exclusivamente do mecanismo de
+autenticação (Seção 6), nunca de dados enviados pelo cliente na própria
+requisição de mutação.
+
+**Middleware único de autenticação:** um único middleware extrai a
+identidade autenticada e a disponibiliza para as rotas (ex.:
+`request.state.usuario`). Nenhuma rota interpreta token/cookie
+individualmente — evita duplicação e inconsistência na extração de
+identidade.
+
+```
+HTTP Request → Middleware de autenticação → request.state.usuario
+             → Endpoint → Caso de uso → PolicyEngine (decide)
+```
+
+**Casos de uso sempre recebem identidade completa:** todo caso de uso
+invocado pela API recebe `usuario_id` **e** `papel` juntos — nunca apenas
+o ID. Isso permite ao `PolicyEngine` aplicar regras de alçada (ex.: valor
+máximo que um `contador` pode aprovar sem escalar para `supervisor`) sem
+precisar buscar o papel de volta no banco a cada chamada.
+
+**Segregação de funções:** a verificação de conflitos de segregação (ex.:
+impedir que um `contador` aprove um lançamento que ele mesmo criou) é
+responsabilidade do domínio (`PolicyEngine`), não da API. A API garante
+apenas que a identidade completa e correta chegue ao domínio para essa
+checagem ser possível — se o domínio ainda não implementa essa checagem
+hoje, isso é um débito técnico do domínio, não desta camada.
+
+**Mapeamento de exceções de domínio para HTTP:** exceções de
+autorização/validação do domínio são traduzidas para códigos HTTP na
+camada Web, sem vazar detalhes internos:
+
+| Exceção de domínio | HTTP |
+|---|---|
+| Não autenticado (sem identidade válida) | `401` |
+| Não autorizado (autenticado, mas sem permissão) | `403` |
+| `PeriodoFechadoError` (já existe em `core/rule_engine/lancamento_service.py`) | `409` |
+| Lançamento não encontrado | `404` |
+
+> **Nota:** `PeriodoFechadoError` está definida no código mas atualmente
+> `LancamentoService._validar_periodo()` levanta `ValueError` genérico, não
+> essa exceção específica (divergência encontrada, não corrigida por este
+> ADR). Corrigir isso é pré-requisito técnico do W3, para que o
+> mapeamento HTTP acima funcione como descrito.
+
+---
+
+## Invariantes arquiteturais
+
+Estas invariantes mantêm a arquitetura consistente à medida que novos
+endpoints forem adicionados — qualquer PR que as violar deveria ser
+rejeitado em review, independentemente de quão pequena pareça a mudança:
+
+- Nenhum endpoint chama repositórios diretamente para decidir autorização.
+- Nenhum endpoint interpreta papel de usuário além de repassá-lo ao caso
+  de uso — a interpretação (permitido ou não) é sempre do domínio.
+- Nenhum endpoint altera estado sem gerar evento de auditoria correspondente.
+- Toda autorização ocorre no domínio (`PolicyEngine`, `Usuario`, casos de uso).
+- Toda identidade utilizada pelo domínio provém do middleware de
+  autenticação — nunca de dados enviados pelo cliente na própria requisição.
+
 ---
 
 ## Alternativas consideradas
 
 | Decisão tomada | Alternativa rejeitada | Por quê |
 |---|---|---|
-| Cookie de sessão assinado | JWT | Complexidade desnecessária para uso single-tenant interno; cookie de sessão é mais simples de revogar |
+| Requisito arquitetural agnóstico (JWT **ou** cookie assinado, ambos aceitáveis) | Fixar uma tecnologia específica no ADR | Revisado após parecer da equipe: pinar a tecnologia é decisão de implementação (W1), não de arquitetura — o que importa é a propriedade garantida (identidade verificável, expiração, integridade), não o mecanismo |
 | HTMX | SPA (React/Vue) | Contraria a Emenda E-10; adiciona build step, `npm`, e uma segunda linguagem de frontend sem necessidade comprovada |
 | Reaproveitar os 4 papéis já modelados em `Usuario.papel` | Criar um sistema de RBAC novo, ou ACL granular por permissão | O domínio já modela 4 papéis suficientes para o fluxo de aprovação; criar um mecanismo paralelo duplicaria modelagem existente. Granularidade fina pode ser adicionada depois sem quebrar o desenho atual |
 | Usuário/senha próprio | OAuth/SSO externo | Prematuro para uma instância single-tenant; revisitar se o projeto evoluir para SaaS multi-empresa |
@@ -226,7 +335,11 @@ precisar mudar, porque a autorização nunca esteve na camada Web.
 
 ---
 
-## Verificação automatizada (planejada para W1/W3)
+## Verificação automatizada (obrigatória — pré-requisito do W3)
+
+**`verificar_endpoints_auth.py` é pré-requisito obrigatório para o W3 ser
+considerado completo** — nenhuma rota de mutação vai ao ar sem essa
+verificação rodando em CI, conforme parecer da equipe multidisciplinar.
 
 Seguindo o padrão de `infra/scripts/verificar_isolamento.py` e
 `verificar_testes_hermeticos.py`:
@@ -249,16 +362,35 @@ no W3, antes de qualquer rota de mutação ir ao ar):
 - ✓ Credenciais inválidas ou usuário inexistente resultam em `401`.
 - ✓ Todo endpoint que altera estado gera um evento de auditoria
   correspondente (via `AuditRepository`, na mesma `UnitOfWork` da operação).
+- ✓ Um usuário autenticado não consegue forjar a identidade de outro
+  usuário (ex.: enviar um `usuario_id` diferente no payload e ter esse
+  valor aceito) — o teste envia um `usuario_id` divergente do
+  autenticado e confirma que o servidor ignora esse campo, usando apenas
+  a identidade do middleware de autenticação.
 
 ---
 
 ## Próximos passos
 
-Esta proposta precisa de revisão antes do W1, especificamente do Internal
-Controls Specialist (RBAC e trilha de auditoria), do Senior Accountant CRC
-(se o fluxo de aprovação aqui descrito reflete o processo real de trabalho)
-e do Arquiteto de Software (posicionamento de `api/` e extensão da matriz
-de importação do ADR 006). Após aprovação, a sequência de implementação é:
+**Ratificado (2026-08):** este ADR incorporou duas rodadas de parecer da
+equipe multidisciplinar (Internal Controls Specialist, Contador CRC,
+Arquiteto de Software) e foi ratificado. **Status: Aceito.** O W1 pode
+começar.
+
+**Tarefas técnicas complementares identificadas na revisão** (fora do
+escopo deste ADR, mas pré-requisito para W3 funcionar como descrito):
+
+1. Conectar `PolicyEngine.avaliar_aprovacao()` às capacidades já
+   modeladas em `Usuario` (`pode_aprovar()`, `pode_aprovar_alto_valor()`,
+   `pode_fechar_periodo()`) — hoje `PolicyEngine` não usa papel algum.
+   Pode virar um ADR complementar ou apenas uma tarefa técnica dentro do
+   W1/W3, a critério da equipe.
+2. Corrigir `LancamentoService._validar_periodo()` para levantar
+   `PeriodoFechadoError` (já definida, nunca usada) em vez de `ValueError`
+   genérico — necessário para o mapeamento HTTP 409 da tabela acima
+   funcionar como descrito.
+
+Sequência de implementação:
 
 - **W1** — esqueleto FastAPI + `api/` + extensão do ADR 006 + `UsuarioORM`/`UsuarioRepository`
 - **W2** — endpoint só-leitura: listar lançamentos pendentes
