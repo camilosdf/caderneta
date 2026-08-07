@@ -1,61 +1,97 @@
-# Caderneta v0.2 — Monorepo por Camadas de Maturidade
+# Caderneta — Monorepo por Camadas de Maturidade
 
-Plataforma modular de automação contábil.  
+Plataforma modular de automação contábil com foco fiscal brasileiro (NF-e, OFX,
+SPED, ICMS/PIS/COFINS, Simples Nacional/Lucro Presumido/Lucro Real).
 Organizada por **camadas de maturidade**, não por funcionalidades.
+
+**Status atual:** pré-produção (`0.x.x`) — ver [Etapas de desenvolvimento](#etapas-de-desenvolvimento).
+Testes: **397 passando** · Cobertura: **~92%** · Isolamento Core/AI: verificado em CI.
 
 ---
 
 ## Estrutura
 
 ```
-caderneta-v2/
+caderneta/
 │
-├── core/                    # Caderneta Core — lógica contábil (sem IA)
-│   ├── domain/              # Etapa 1: Entidades, Value Objects, invariantes
-│   ├── ports/               # Etapa 2: Contratos (Protocols) para plugins externos
-│   ├── parsers/             # Etapa 3: Parsers determinísticos (XML, OFX, CSV)
-│   ├── pipeline/            # Etapa 2: Orquestrador do fluxo
-│   ├── rule_engine/         # Etapa 4: Motor contábil e regras
-│   ├── audit/               # Etapa 5: Hash chain imutável
-│   └── adapters/            # Etapa 9: Adaptadores de exportação (GnuCash, etc.)
+├── core/                         # Caderneta Core — lógica contábil (sem IA)
+│   ├── domain/                   # Entidades, Value Objects, invariantes
+│   ├── ports/                    # Contratos (Protocols) para plugins externos
+│   ├── parsers/                  # Parsers determinísticos
+│   │   ├── nfe/                  #   XML NF-e (CFOP, NCM, CST, tributos)
+│   │   ├── csv/                  #   Nubank, Inter, Itaú, Bradesco, Santander
+│   │   ├── ofx.py                #   Extratos OFX/QFX
+│   │   ├── detector.py           #   Detecção de tipo por conteúdo
+│   │   └── adapters.py           #   ParserProtocol — interface comum
+│   ├── pipeline/
+│   │   └── parser_factory.py     # Resolve TipoDocumento → Parser
+│   ├── application/
+│   │   └── use_cases/            # ProcessarDocumentoUseCase (orquestração)
+│   ├── rule_engine/               # Motor Contábil
+│   │   ├── classification_impl.py #   Classificação por regras determinísticas
+│   │   ├── lancamento_service.py  #   Constrói/valida/persiste Lancamento
+│   │   ├── tax_engine.py          #   Apuração ICMS/PIS/COFINS
+│   │   └── estorno.py             #   Motor de estorno
+│   ├── audit/
+│   │   └── chain.py              # Hash chain imutável (dataclasses)
+│   ├── infra/                    # Persistência (SQLAlchemy 2)
+│   │   ├── db/                   #   Base ORM, SessionFactory, modelos
+│   │   ├── repositories/         #   Documento, Lancamento, Audit, Período, Centro de Custo
+│   │   └── unit_of_work.py       #   Transação única multi-repositório
+│   ├── policies/                 # Regras de aprovação (PolicyEngine)
+│   ├── adapters/
+│   │   └── csv_exporter.py       # Exportação CSV compatível com GnuCash
+│   └── cli.py                    # Interface de linha de comando (Typer)
 │
-├── ai/                      # Caderneta AI — plugins (Etapa 7+)
-│   ├── embeddings/          # Sentence Transformers para normalização semântica
-│   ├── llm/                 # Ollama + Qwen para desambiguação
-│   ├── ocr/                 # PaddleOCR para documentos não estruturados
-│   └── rag/                 # RAG sobre Finance Knowledge Base
+├── ai/                            # Caderneta AI — plugins (ainda não implementado)
+│   ├── embeddings/                # Normalização semântica de fornecedores
+│   ├── llm/                       # Desambiguação de casos incertos
+│   ├── ocr/                       # OCR para documentos não estruturados
+│   └── rag/                       # RAG sobre base de conhecimento fiscal
+│
+├── shared/
+│   └── identifiers.py            # empresa_id_from_string() — conversão determinística
 │
 ├── infra/
-│   ├── db/migrations/       # Schema PostgreSQL
-│   └── docker/              # docker-compose.yml
+│   ├── migrations/                # Alembic (env.py, script.py.mako, versions/)
+│   ├── docker/                    # docker-compose.yml
+│   └── scripts/
+│       ├── verificar_isolamento.py  # CI: garante que core/ nunca importa ai/
+│       └── release.py
 │
 ├── docs/
-│   └── adr/                 # Architecture Decision Records
-│       ├── 001-separacao-core-ai.md
-│       ├── 002-auditoria-hash-chain.md
-│       └── 003-ia-como-plugin.md
+│   └── adr/                       # Architecture Decision Records (7 ADRs)
 │
 └── tests/
-    ├── unit/core/           # Testes do domínio e regras (meta: > 90% cobertura)
-    ├── unit/ai/             # Testes dos plugins de IA
-    ├── integration/         # Testes de integração end-to-end
-    └── fixtures/            # Documentos anonimizados para testes
+    └── unit/core/                 # 397 testes — domínio, parsers, motor contábil, infra
 ```
 
 ---
 
 ## Princípios
 
-**1. Core nunca importa AI.**  
-O `core/` funciona completamente sem modelos de linguagem, GPU ou conexão externa.  
-Verificado em CI via `mypy` com `disallow_any_explicit = true` em `core.*`.
+**1. Core nunca importa AI.**
+O `core/` funciona completamente sem modelos de linguagem, GPU ou conexão
+externa. Verificado em CI via `infra/scripts/verificar_isolamento.py`
+(análise estática de imports).
 
-**2. AI implementa contratos do Core.**  
-Os plugins em `ai/` implementam os `Protocol`s definidos em `core/ports/`.  
-Trocar Ollama por vLLM = substituir uma classe, sem tocar em nenhuma regra contábil.
+**2. AI implementa contratos do Core.**
+Quando implementados, os plugins em `ai/` seguirão os `Protocol`s definidos
+em `core/ports/`. Trocar um provedor de LLM por outro será substituir uma
+classe, sem tocar em nenhuma regra contábil.
 
-**3. Toda decisão importante tem um ADR.**  
+**3. LLMs são camada de sugestão, nunca de decisão.**
+Toda classificação contábil final passa por regras determinísticas
+(`core/rule_engine/`). IA, quando presente, apenas sugere — nunca decide
+sozinha um lançamento.
+
+**4. Toda decisão importante tem um ADR.**
 Ver `docs/adr/` para entender por que cada tecnologia foi escolhida.
+
+**5. Auditoria é append-only e verificável.**
+Todo evento relevante do pipeline gera um registro em hash chain
+(`core/audit/chain.py`, persistido via `AuditRepository`). Qualquer
+adulteração é detectável via `caderneta verificar-integridade`.
 
 ---
 
@@ -68,11 +104,50 @@ python -m venv .venv && source .venv/bin/activate
 # 2. Instalar Core (sem IA)
 pip install -e ".[core,dev]"
 
-# 3. Banco de dados
+# 3. Banco de dados (opcional — SQLite funciona sem Docker)
 docker compose -f infra/docker/docker-compose.yml up -d
 
-# 4. Rodar testes do Core (rápido, sem GPU)
+# 4. Rodar testes
 pytest tests/unit/core/ -v --cov=core --cov-report=term-missing
+
+# 5. Verificar isolamento Core/AI
+python infra/scripts/verificar_isolamento.py
+```
+
+Por padrão, a CLI usa SQLite (`dados/datalake/caderneta.db`). Para PostgreSQL,
+defina `DATABASE_URL`:
+
+```bash
+export DATABASE_URL="postgresql+psycopg://user:senha@localhost:5432/caderneta"
+```
+
+---
+
+## Uso via CLI
+
+```bash
+# Processar documentos e gerar CSV para o GnuCash
+caderneta processar ./documentos/ --usuario "joao" --empresa "acme" --saida ./saida/
+
+# Simular sem persistir nada (dry-run)
+caderneta dry-run ./documentos/
+
+# Gerenciar períodos contábeis
+caderneta periodo abrir 2026 6 --empresa acme
+caderneta periodo fechar 2026 6 --responsavel "gerente" --empresa acme
+caderneta periodo listar --empresa acme
+
+# Gerenciar centros de custo
+caderneta centro-custo criar CC-VENDAS "Vendas" --empresa acme
+caderneta centro-custo listar --empresa acme
+
+# Consultar e conciliar lançamentos com o GnuCash
+caderneta lancamentos listar --empresa acme --status exportado
+caderneta lancamentos vincular-guid <id> <guid-do-gnucash> --empresa acme
+
+# Auditoria
+caderneta verificar-integridade
+caderneta status
 ```
 
 ---
@@ -81,28 +156,39 @@ pytest tests/unit/core/ -v --cov=core --cov-report=term-missing
 
 | Etapa | Módulo | Status |
 |-------|--------|--------|
-| 0 — Fundação | Monorepo, ADRs, CI/CD | ✅ |
+| 0 — Fundação | Monorepo, ADRs, CI (isolamento) | ✅ |
 | 1 — Domínio | `core/domain/` | ✅ |
-| 2 — Pipeline (mocks) | `core/pipeline/`, `core/ports/` | ✅ parcial |
-| 3 — Parsers | `core/parsers/` | 🔜 |
-| 4 — Motor Contábil | `core/rule_engine/` | ✅ parcial |
-| 5 — Auditoria | `core/audit/` | ✅ |
+| 2 — Pipeline | `core/pipeline/`, `core/ports/`, `core/application/` | ✅ |
+| 3 — Parsers | `core/parsers/` (NF-e, OFX, CSV) | ✅ |
+| 4 — Motor Contábil | `core/rule_engine/` (classificação, tax engine, `LancamentoService`) | ✅ |
+| 5 — Persistência | `core/infra/` (SQLAlchemy 2, repositórios, Unit of Work) | ✅ |
+| 5 — Auditoria | `core/audit/` + `AuditRepository` (hash chain em banco) | ✅ |
+| — Período Contábil | `PeriodoContabilRepository` + CLI `periodo` | ✅ |
+| — Centro de Custo | `CentroCustoRepository` + CLI `centro-custo` | ✅ |
+| 9 — Integração GnuCash | Exportação CSV + conciliação por GUID | ✅ |
 | 6 — Interface Web | FastAPI + HTMX | 🔜 |
-| 7 — IA | `ai/` | 🔜 |
-| 8 — Conciliação | `core/` + OFX/Open Finance | 🔜 |
-| 9 — Integrações | `core/adapters/` | 🔜 |
+| 7 — IA | `ai/` (embeddings, LLM, OCR) | 🔜 |
+| 8 — Conciliação avançada | Open Finance, motor de diferenças | 🔜 |
+| Homologação | Aprovação formal do CRC | 🔜 |
+
+> **Nota:** a constante `VERSAO_ATUAL` em `core/versao.py` ainda não foi
+> sincronizada com o histórico de tags do repositório (`v0.004.x` a
+> `v0.009.000`). Atualizar em conjunto com a próxima revisão formal de
+> versionamento (ADR 007).
 
 ---
 
-## Relação com a v0.1
+## Testando
 
-O código da Fase 1 (v0.1) serve como **protótipo de referência**:
+```bash
+# Suite completa
+pytest tests/unit/core/ -v
 
-| v0.1 | v0.2 | Papel |
-|------|------|-------|
-| `models/documento.py` | `core/domain/entities.py` | Elevado ao domínio |
-| `motores/classificador.py` | `core/rule_engine/classification_impl.py` | Reimplementado como Plugin |
-| `auditoria/log.py` | `core/audit/chain.py` | Elevado com hash chain |
-| `motores/parsers/` | `core/parsers/` | Migrado na Etapa 3 |
-| `migrations/` | `infra/db/migrations/` | Copiado sem alteração |
-| `dados/regras/` | `tests/fixtures/` | Virou fixture de teste |
+# Com cobertura
+pytest tests/unit/core/ --cov=core --cov-report=term-missing
+
+# Apenas um módulo
+pytest tests/unit/core/test_lancamento_service.py -v
+```
+
+Meta de cobertura: 75% mínimo (`pyproject.toml`). Atual: ~92%.
