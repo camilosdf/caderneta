@@ -448,6 +448,122 @@ def status(
 
 
 # =============================================================
+# PERÍODO CONTÁBIL
+# =============================================================
+
+periodo_app = typer.Typer(help="Gerencia períodos contábeis (abertura/fechamento).")
+app.add_typer(periodo_app, name="periodo")
+
+
+@periodo_app.command(name="fechar")
+def periodo_fechar(
+    ano: Annotated[int, typer.Argument(help="Ano da competência")],
+    mes: Annotated[int, typer.Argument(help="Mês da competência (1-12)")],
+    responsavel: Annotated[str, typer.Option("--responsavel", "-r", help="Quem está fechando o período")],
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Fecha um período contábil — bloqueia novos lançamentos na competência."""
+    from core.infra.unit_of_work import UnitOfWork
+    import uuid as _uuid
+
+    if not (1 <= mes <= 12):
+        rprint(f"[red]Mês inválido: {mes}. Use 1-12.[/red]")
+        raise typer.Exit(1)
+
+    empresa_id = _uuid.uuid5(_uuid.NAMESPACE_DNS, empresa)
+    session_factory = _session_factory(datalake)
+
+    try:
+        with UnitOfWork(session_factory) as uow:
+            periodo = uow.periodos.obter_ou_criar(empresa_id, ano, mes)
+            periodo.fechar(responsavel)
+            uow.periodos.salvar(periodo)
+            uow.commit()
+    except ValueError as e:
+        rprint(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)
+
+    rprint(Panel(
+        f"[bold green]✅ Período fechado[/bold green]\n\n"
+        f"Competência:  [cyan]{ano}/{mes:02d}[/cyan]\n"
+        f"Responsável:  [cyan]{responsavel}[/cyan]\n"
+        f"Empresa:      [dim]{empresa}[/dim]",
+        border_style="green",
+        title="Período Contábil",
+    ))
+
+
+@periodo_app.command(name="abrir")
+def periodo_abrir(
+    ano: Annotated[int, typer.Argument(help="Ano da competência")],
+    mes: Annotated[int, typer.Argument(help="Mês da competência (1-12)")],
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Garante que um período contábil existe e está aberto."""
+    from core.infra.unit_of_work import UnitOfWork
+    import uuid as _uuid
+
+    if not (1 <= mes <= 12):
+        rprint(f"[red]Mês inválido: {mes}. Use 1-12.[/red]")
+        raise typer.Exit(1)
+
+    empresa_id = _uuid.uuid5(_uuid.NAMESPACE_DNS, empresa)
+    session_factory = _session_factory(datalake)
+
+    with UnitOfWork(session_factory) as uow:
+        periodo = uow.periodos.obter_ou_criar(empresa_id, ano, mes)
+        uow.commit()
+
+    rprint(Panel(
+        f"[bold green]✅ Período {periodo.status.value}[/bold green]\n\n"
+        f"Competência: [cyan]{ano}/{mes:02d}[/cyan]",
+        border_style="green",
+        title="Período Contábil",
+    ))
+
+
+@periodo_app.command(name="listar")
+def periodo_listar(
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Lista os períodos contábeis cadastrados para a empresa."""
+    from core.infra.unit_of_work import UnitOfWork
+    import uuid as _uuid
+
+    empresa_id = _uuid.uuid5(_uuid.NAMESPACE_DNS, empresa)
+    session_factory = _session_factory(datalake)
+
+    with UnitOfWork(session_factory) as uow:
+        periodos = uow.periodos.listar_por_empresa(empresa_id)
+
+    if not periodos:
+        rprint("[dim]Nenhum período cadastrado ainda.[/dim]")
+        return
+
+    tabela = Table(title="Períodos Contábeis", show_header=True, header_style="bold")
+    tabela.add_column("Competência")
+    tabela.add_column("Status")
+    tabela.add_column("Fechado por")
+    tabela.add_column("Fechado em")
+
+    for p in periodos:
+        status_str = (
+            "[green]aberto[/green]" if p.status.value == "aberto" else "[red]fechado[/red]"
+        )
+        tabela.add_row(
+            f"{p.ano}/{p.mes:02d}",
+            status_str,
+            p.fechado_por or "—",
+            p.fechado_em.strftime("%Y-%m-%d %H:%M") if p.fechado_em else "—",
+        )
+
+    console.print(tabela)
+
+
+# =============================================================
 # HELPERS INTERNOS
 # =============================================================
 

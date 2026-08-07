@@ -62,10 +62,12 @@ class LancamentoService:
         contas_por_codigo: Optional[dict[str, ContaContabil]] = None,
         centros_por_codigo: Optional[dict[str, CentroCusto]] = None,
         periodo_atual: Optional[PeriodoContabil] = None,
+        periodos_por_competencia: Optional[dict[tuple[int, int], PeriodoContabil]] = None,
     ) -> None:
         self._contas = contas_por_codigo or {}
         self._centros = centros_por_codigo or {}
         self._periodo = periodo_atual
+        self._periodos = periodos_por_competencia or {}
 
     # ── Construção ───────────────────────────────────────────────────────
 
@@ -139,12 +141,22 @@ class LancamentoService:
         self._validar_contas_e_centro_custo(lancamento)
 
     def _validar_periodo(self, lancamento: Lancamento) -> None:
-        if self._periodo is None or lancamento.data_lancamento is None:
+        if lancamento.data_lancamento is None:
             return
-        if (
-            self._periodo.ano != lancamento.data_lancamento.year
-            or self._periodo.mes != lancamento.data_lancamento.month
-        ):
+
+        competencia = (lancamento.data_lancamento.year, lancamento.data_lancamento.month)
+
+        # Prioridade 1: mapa de múltiplas competências (uso em lote/CLI)
+        if self._periodos:
+            periodo = self._periodos.get(competencia)
+            if periodo is not None:
+                periodo.verificar_aberto()
+            return
+
+        # Prioridade 2: período único injetado (uso simples/testes)
+        if self._periodo is None:
+            return
+        if (self._periodo.ano, self._periodo.mes) != competencia:
             return  # período informado não corresponde à data do lançamento
         self._periodo.verificar_aberto()
 

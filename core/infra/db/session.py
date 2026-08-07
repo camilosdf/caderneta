@@ -61,7 +61,7 @@ class SessionFactory:
         self._session_factory = sessionmaker(
             bind=self._engine,
             autocommit=False,
-            autoflush=False,
+            autoflush=True,
             expire_on_commit=False,
         )
 

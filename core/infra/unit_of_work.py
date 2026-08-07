@@ -19,11 +19,12 @@ from core.infra.db.session import SessionFactory
 from core.infra.repositories.audit_repository import AuditRepository
 from core.infra.repositories.documento_repository import DocumentoRepository
 from core.infra.repositories.lancamento_repository import LancamentoRepository
+from core.infra.repositories.periodo_contabil_repository import PeriodoContabilRepository
 
 
 class UnitOfWork:
-    """Agrupa DocumentoRepository, LancamentoRepository e AuditRepository
-    em uma única transação de banco.
+    """Agrupa DocumentoRepository, LancamentoRepository, AuditRepository
+    e PeriodoContabilRepository em uma única transação de banco.
 
     Commit é explícito — chamar uow.commit() é obrigatório para persistir.
     Sair do bloco `with` sem commit() reverte tudo.
@@ -37,6 +38,7 @@ class UnitOfWork:
         self.documentos: Optional[DocumentoRepository] = None
         self.lancamentos: Optional[LancamentoRepository] = None
         self.audit: Optional[AuditRepository] = None
+        self.periodos: Optional[PeriodoContabilRepository] = None
 
     def __enter__(self) -> "UnitOfWork":
         self._session = self._session_factory._session_factory()
@@ -45,6 +47,7 @@ class UnitOfWork:
         self.documentos = DocumentoRepository(self._session)
         self.lancamentos = LancamentoRepository(self._session)
         self.audit = AuditRepository(self._session)
+        self.periodos = PeriodoContabilRepository(self._session)
 
         return self
 
@@ -65,6 +68,7 @@ class UnitOfWork:
             self.documentos = None
             self.lancamentos = None
             self.audit = None
+            self.periodos = None
 
     def commit(self) -> None:
         """Confirma todas as operações realizadas nos repositórios desta UoW."""

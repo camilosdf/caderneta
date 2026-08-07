@@ -19,6 +19,7 @@ from core.infra.db.models import (  # noqa: F401
     AuditEventoORM,
     DocumentoORM,
     LancamentoORM,
+    PeriodoContabilORM,
     SplitORM,
 )
 

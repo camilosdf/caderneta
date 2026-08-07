@@ -214,3 +214,24 @@ class AuditEventoORM(Base):
 
     def __repr__(self) -> str:
         return f"<AuditEventoORM tipo={self.tipo} ts={self.timestamp}>"
+
+
+class PeriodoContabilORM(Base):
+    """Persiste PeriodoContabil — controle de abertura/fechamento por competência."""
+
+    __tablename__ = "periodos_contabeis"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    ano: Mapped[int] = mapped_column(Integer, nullable=False)
+    mes: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="aberto")
+    fechado_por: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fechado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "ano", "mes", name="uq_periodo_empresa_competencia"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PeriodoContabilORM {self.ano}/{self.mes:02d} status={self.status}>"
