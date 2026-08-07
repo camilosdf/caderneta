@@ -164,23 +164,20 @@ omit = [
     "tests/*",
     "infra/*",
     "*/ai/ocr/spike.py",
-    # CLI e use_cases requerem ambiente completo (banco, arquivos reais)
-    # Cobertos por testes de integração (Etapa 6), não unitários
+    # CLI depende de banco/arquivos reais e é testada via smoke test manual,
+    # não pytest. use_cases NÃO está mais aqui — 98% de cobertura real via
+    # tests/unit/core/test_processar_documento.py.
     "core/cli.py",
-    "core/application/use_cases/*.py",
-    # Parsers herdados da v0.1 — migração completa na Etapa 3
-    "core/motores_detector.py",
-    "core/motores_parsers_ofx.py",
-    "core/motores_parsers_csv.py",
 ]
 
 [tool.coverage.report]
 # Metas por etapa (ADR 007):
-#   Etapa 1 (domínio)      → 90%+  ✅ (96%)
-#   Etapa 4 (tax/rules)    → 90%+  ✅ (97%)
-#   Etapa 5 (auditoria)    → 85%+  ✅ (92%)
-#   Etapa 3 (parsers)      → 75%+  🔜 (novos testes)
-#   Meta geral Etapa 3     → 75%
+#   Etapa 1 (domínio)       → 90%+  ✅ (96%)
+#   Etapa 3 (parsers)       → 75%+  ✅ (88%+)
+#   Etapa 4 (motor contábil)→ 90%+  ✅ (97%+)
+#   Etapa 5 (persistência)  → 85%+  ✅
+#   Etapa 5 (auditoria)     → 85%+  ✅ (92%)
+#   Meta geral              → 75%   ✅ (92%+)
 fail_under = 75
 show_missing = true
 skip_covered = false

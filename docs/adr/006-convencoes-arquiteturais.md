@@ -19,7 +19,8 @@ PERMITIDO                          PROIBIDO
 core/application → core/domain     core/* → ai/*
 core/application → core/ports      ai/* → core/domain (diretamente)
 core/application → core/events     core/domain → core/parsers
-core/domain → (nada externo)       core/domain → core/rule_engine
+core/application → core/infra      core/domain → core/rule_engine
+core/domain → (nada externo)       core/domain → core/infra
 core/rule_engine → core/domain     qualquer circular
 core/policies → core/domain
 core/policies → core/rule_engine
@@ -27,6 +28,10 @@ core/parsers → core/domain
 core/audit → core/domain
 core/audit → core/events
 core/adapters → core/ports
+core/infra → core/domain
+core/infra → core/audit            (AuditRepository usa EventoAuditoria/TipoEvento)
+core/cli → core/infra
+core/cli → core/application
 ai/* → core/ports (somente)
 ai/* → core/events (somente leitura)
 ```
@@ -42,11 +47,27 @@ ai/* → core/events (somente leitura)
 
 ## Convenções de teste
 
-- `tests/unit/core/` — sem I/O, sem banco, sem rede. Rodam em < 2s.
+- `tests/unit/core/` — foco em lógica de domínio e regras, sem rede externa
+  nem GPU. Rodam em segundos.
+  > **Divergência conhecida (pendente de decisão do Comitê):** os testes de
+  > `core/infra/repositories/` e `core/infra/unit_of_work.py` usam SQLite em
+  > memória real (não mockado) dentro de `tests/unit/core/`. Na prática isso
+  > funciona bem — SQLite em memória é rápido e sem dependências externas —
+  > mas contraria a intenção original desta convenção ("sem banco"). Duas
+  > opções para o Comitê decidir: (a) mover esses testes para uma nova pasta
+  > `tests/unit/infra/` com convenção própria, ou (b) atualizar esta
+  > convenção para permitir banco em memória em `tests/unit/`, reservando
+  > `tests/integration/` para PostgreSQL real via Docker Compose.
 - `tests/unit/ai/` — podem usar modelos em memória. Sem GPU obrigatória.
-- `tests/integration/` — requerem banco e Redis (Docker Compose).
-- `tests/property/` — Hypothesis. Foco em parsers e regras fiscais.
+- `tests/integration/` — requerem banco e Redis (Docker Compose). Diretório
+  criado, ainda sem testes até a Etapa 6 (Interface Web).
 - `tests/fixtures/` — documentos anonimizados. Nunca dados reais.
+
+> **Nota:** a convenção original também citava `tests/property/` com
+> Hypothesis. Esse diretório não foi criado; `hypothesis` está instalado
+> como dependência de dev mas ainda não há testes property-based no
+> repositório. Remover a referência ou criar o diretório é uma decisão
+> pendente do Comitê.
 
 ## Convenções de eventos
 
@@ -72,8 +93,12 @@ Eventos são imutáveis (`frozen=True`). Nunca alterar um evento publicado.
 
 ```bash
 # Executado em todo PR
-python infra/scripts/verificar_isolamento.py    # core não importa ai
-python infra/scripts/verificar_convencoes.py    # nomenclatura e estrutura
-pytest tests/unit/ --timeout=2                  # testes unitários rápidos
-pytest --cov=core/domain --cov-fail-under=90   # cobertura do domínio
+python infra/scripts/verificar_isolamento.py    # core não importa ai — implementado
+pytest tests/unit/core/ --cov=core --cov-report=term-missing  # 397 testes, meta 75%+
 ```
+
+> **Nota:** `verificar_convencoes.py` (nomenclatura/estrutura) e
+> `pytest --timeout=2` para checagem de velocidade eram citados na versão
+> original deste ADR mas nunca foram implementados. A única verificação
+> automatizada ativa hoje é o isolamento Core/AI. Nomenclatura e estrutura
+> são revisadas manualmente em code review.
