@@ -15,8 +15,12 @@ from sqlalchemy import engine_from_config, pool
 from core.infra.db.session import Base  # noqa: F401
 
 # Importar modelos para registrá-los na Base
-# (adicionar aqui conforme novos modelos forem criados em A2)
-# from core.infra.db.models import *  # noqa: F401, F403
+from core.infra.db.models import (  # noqa: F401
+    AuditEventoORM,
+    DocumentoORM,
+    LancamentoORM,
+    SplitORM,
+)
 
 config = context.config
 
