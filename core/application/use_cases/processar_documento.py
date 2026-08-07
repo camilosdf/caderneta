@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from core.audit.chain import AuditChain, TipoEvento
+from core.audit.chain import TipoEvento
 from core.events.catalog import (
     DocumentoDuplicado,
     DocumentoErro,
@@ -22,6 +22,8 @@ from core.events.catalog import (
     EventBusPort,
     LancamentoCriado,
 )
+from core.infra.db.session import SessionFactory
+from core.infra.unit_of_work import UnitOfWork
 from core.policies.engine import PolicyEngine
 from core.ports.classification import ClassificationPort
 
@@ -67,7 +69,7 @@ class ProcessarDocumentoUseCase:
         parser_factory,     # factory que retorna o parser correto por tipo
         classification_port: ClassificationPort,
         policy_engine: PolicyEngine,
-        audit_chain: AuditChain,
+        session_factory: SessionFactory,
         event_bus: EventBusPort,
         exporter,           # ExportadorCSV
         pasta_saida: Path,
@@ -76,7 +78,7 @@ class ProcessarDocumentoUseCase:
         self._parser_factory = parser_factory
         self._classification = classification_port
         self._policy = policy_engine
-        self._audit = audit_chain
+        self._session_factory = session_factory
         self._bus = event_bus
         self._exporter = exporter
         self._pasta_saida = pasta_saida
@@ -87,140 +89,142 @@ class ProcessarDocumentoUseCase:
         resultado = ResultadoProcessamento(sucesso=False, correlacao_id=correlacao)
 
         try:
-            # ── 1. Hash e deduplicação ──────────────────────────────
-            hash_doc = self._detector.calcular_hash(cmd.filepath)
+            with UnitOfWork(self._session_factory) as uow:
+                # ── 1. Hash e deduplicação ──────────────────────────
+                hash_doc = self._detector.calcular_hash(cmd.filepath)
 
-            duplicata = self._audit.buscar_por_hash_documento(hash_doc)
-            if duplicata:
-                self._bus.publicar(DocumentoDuplicado(
+                duplicata = uow.audit.buscar_por_documento(hash_doc)
+                if duplicata:
+                    self._bus.publicar(DocumentoDuplicado(
+                        correlacao_id=correlacao,
+                        hash_sha256=hash_doc,
+                        primeiro_processamento=duplicata.get("timestamp", ""),
+                    ))
+                    resultado.erros.append(
+                        f"Documento já processado em {duplicata.get('timestamp', '?')}."
+                    )
+                    return resultado
+
+                # ── 2. Detectar tipo ─────────────────────────────────
+                tipo = self._detector.detectar(cmd.filepath)
+
+                self._bus.publicar(DocumentoRecebido(
                     correlacao_id=correlacao,
+                    nome_arquivo=cmd.filepath.name,
                     hash_sha256=hash_doc,
-                    primeiro_processamento=duplicata.get("timestamp", ""),
-                ))
-                resultado.erros.append(
-                    f"Documento já processado em {duplicata.get('timestamp', '?')}."
-                )
-                return resultado
-
-            # ── 2. Detectar tipo ────────────────────────────────────
-            tipo = self._detector.detectar(cmd.filepath)
-
-            self._bus.publicar(DocumentoRecebido(
-                correlacao_id=correlacao,
-                nome_arquivo=cmd.filepath.name,
-                hash_sha256=hash_doc,
-                tipo_documento=tipo.value,
-                usuario=cmd.usuario,
-            ))
-
-            self._audit.registrar(
-                tipo=TipoEvento.DOCUMENTO_RECEBIDO,
-                payload={"nome_arquivo": cmd.filepath.name, "tipo": tipo.value},
-                usuario=cmd.usuario,
-                empresa_id=cmd.empresa_id,
-                documento_hash=hash_doc,
-            )
-
-            # ── 3. Parsear ──────────────────────────────────────────
-            parser = self._parser_factory.obter(tipo)
-            documentos = list(parser.parsear(cmd.filepath))
-            resultado.documentos_processados = len(documentos)
-
-            if not documentos:
-                resultado.erros.append("Nenhuma transação encontrada no arquivo.")
-                return resultado
-
-            for doc in documentos:
-                self._bus.publicar(DocumentoParseado(
-                    correlacao_id=correlacao,
-                    documento_id=str(doc.id),
-                    hash_sha256=hash_doc,
-                    fonte_extracao=doc.fonte_extracao.value,
-                    confidence_minima=doc.confidence_minima,
-                    precisa_revisao=doc.precisa_revisao,
+                    tipo_documento=tipo.value,
+                    usuario=cmd.usuario,
                 ))
 
-            # ── 4. Normalizar + Classificar + Gerar lançamentos ─────
-            from core.rule_engine.classification_impl import RegrasDeterministicasPlugin
-            lancamentos = []
-
-            for doc in documentos:
-                norm = self._classification.normalizar_fornecedor(
-                    doc.nome_emitente or ""
-                )
-                sugestao = self._classification.sugerir_categoria(doc, None)
-                lancamento = self._construir_lancamento(doc, sugestao, norm, correlacao)
-
-                # Avaliar política de pré-aprovação
-                politica = self._policy.avaliar_pre_aprovacao(
-                    confidence=lancamento.confidence or 0.0,
-                    valor=lancamento.valor_total.valor if lancamento.splits else __import__("decimal").Decimal("0"),
-                )
-                from core.policies.engine import ResultadoPolitica
-                lancamento.pre_aprovado = (
-                    politica.resultado == ResultadoPolitica.PERMITIDO
+                uow.audit.registrar(
+                    tipo=TipoEvento.DOCUMENTO_RECEBIDO,
+                    payload={"nome_arquivo": cmd.filepath.name, "tipo": tipo.value},
+                    usuario=cmd.usuario,
+                    empresa_id=cmd.empresa_id,
+                    documento_hash=hash_doc,
                 )
 
-                lancamentos.append(lancamento)
+                # ── 3. Parsear ───────────────────────────────────────
+                parser = self._parser_factory.obter(tipo)
+                documentos = list(parser.parsear(cmd.filepath))
+                resultado.documentos_processados = len(documentos)
 
-                self._bus.publicar(LancamentoCriado(
-                    correlacao_id=correlacao,
-                    lancamento_id=str(lancamento.id),
-                    documento_id=str(doc.id),
-                    valor=str(lancamento.valor_total.valor) if lancamento.splits else "0",
-                    conta_debito=lancamento.splits[0].conta.codigo if lancamento.splits else "",
-                    conta_credito=lancamento.splits[-1].conta.codigo if lancamento.splits else "",
-                    nivel_aprovacao=lancamento.nivel_aprovacao.value if lancamento.nivel_aprovacao else "",
-                    pre_aprovado=lancamento.pre_aprovado,
-                ))
+                if not documentos:
+                    resultado.erros.append("Nenhuma transação encontrada no arquivo.")
+                    return resultado
 
-                self._audit.registrar(
-                    tipo=TipoEvento.LANCAMENTO_GERADO,
+                for doc in documentos:
+                    self._bus.publicar(DocumentoParseado(
+                        correlacao_id=correlacao,
+                        documento_id=str(doc.id),
+                        hash_sha256=hash_doc,
+                        fonte_extracao=doc.fonte_extracao.value,
+                        confidence_minima=doc.confidence_minima,
+                        precisa_revisao=doc.precisa_revisao,
+                    ))
+
+                # ── 4. Normalizar + Classificar + Gerar lançamentos ──
+                lancamentos = []
+
+                for doc in documentos:
+                    norm = self._classification.normalizar_fornecedor(
+                        doc.nome_emitente or ""
+                    )
+                    sugestao = self._classification.sugerir_categoria(doc, None)
+                    lancamento = self._construir_lancamento(doc, sugestao, norm, correlacao)
+
+                    politica = self._policy.avaliar_pre_aprovacao(
+                        confidence=lancamento.confidence or 0.0,
+                        valor=lancamento.valor_total.valor if lancamento.splits else __import__("decimal").Decimal("0"),
+                    )
+                    from core.policies.engine import ResultadoPolitica
+                    lancamento.pre_aprovado = (
+                        politica.resultado == ResultadoPolitica.PERMITIDO
+                    )
+
+                    lancamentos.append(lancamento)
+
+                    self._bus.publicar(LancamentoCriado(
+                        correlacao_id=correlacao,
+                        lancamento_id=str(lancamento.id),
+                        documento_id=str(doc.id),
+                        valor=str(lancamento.valor_total.valor) if lancamento.splits else "0",
+                        conta_debito=lancamento.splits[0].conta.codigo if lancamento.splits else "",
+                        conta_credito=lancamento.splits[-1].conta.codigo if lancamento.splits else "",
+                        nivel_aprovacao=lancamento.nivel_aprovacao.value if lancamento.nivel_aprovacao else "",
+                        pre_aprovado=lancamento.pre_aprovado,
+                    ))
+
+                    uow.audit.registrar(
+                        tipo=TipoEvento.LANCAMENTO_GERADO,
+                        payload={
+                            "valor": str(lancamento.valor_total.valor) if lancamento.splits else "0",
+                            "pre_aprovado": lancamento.pre_aprovado,
+                            "confidence": lancamento.confidence,
+                        },
+                        lancamento_id=str(lancamento.id),
+                        documento_id=str(doc.id),
+                        documento_hash=hash_doc,
+                        usuario=cmd.usuario,
+                        empresa_id=cmd.empresa_id,
+                    )
+
+                resultado.lancamentos_criados = len(lancamentos)
+                resultado.lancamentos_revisao = sum(1 for l in lancamentos if l.precisa_revisao)
+
+                # ── 5. Exportar CSV ──────────────────────────────────
+                exportacao = self._exporter.exportar(
+                    lancamentos,
+                    self._pasta_saida,
+                    prefixo=cmd.filepath.stem,
+                    aprovado_por=cmd.usuario,
+                )
+
+                uow.audit.registrar(
+                    tipo=TipoEvento.CSV_GERADO,
                     payload={
-                        "valor": str(lancamento.valor_total.valor) if lancamento.splits else "0",
-                        "pre_aprovado": lancamento.pre_aprovado,
-                        "confidence": lancamento.confidence,
+                        "caminho": str(exportacao.caminho),
+                        "hash_csv": exportacao.hash_sha256,
+                        "total": exportacao.total_lancamentos,
                     },
-                    lancamento_id=str(lancamento.id),
-                    documento_id=str(doc.id),
                     documento_hash=hash_doc,
                     usuario=cmd.usuario,
+                    empresa_id=cmd.empresa_id,
                 )
 
-            resultado.lancamentos_criados = len(lancamentos)
-            resultado.lancamentos_revisao = sum(1 for l in lancamentos if l.precisa_revisao)
+                # ── 6. Marcar como processado (deduplicação futura) ──
+                uow.audit.registrar(
+                    tipo=TipoEvento.DOCUMENTO_PROCESSADO,
+                    payload={"nome_arquivo": cmd.filepath.name, "lancamentos": len(lancamentos)},
+                    documento_hash=hash_doc,
+                    usuario=cmd.usuario,
+                    empresa_id=cmd.empresa_id,
+                )
 
-            # ── 5. Exportar CSV ─────────────────────────────────────
-            exportacao = self._exporter.exportar(
-                lancamentos,
-                self._pasta_saida,
-                prefixo=cmd.filepath.stem,
-                aprovado_por=cmd.usuario,
-            )
-
-            self._audit.registrar(
-                tipo=TipoEvento.CSV_GERADO,
-                payload={
-                    "caminho": str(exportacao.caminho),
-                    "hash_csv": exportacao.hash_sha256,
-                    "total": exportacao.total_lancamentos,
-                },
-                documento_hash=hash_doc,
-                usuario=cmd.usuario,
-            )
-
-            # ── 6. Marcar como processado (deduplicação futura) ─────
-            self._audit.registrar(
-                tipo=TipoEvento.DOCUMENTO_PROCESSADO,
-                payload={"nome_arquivo": cmd.filepath.name, "lancamentos": len(lancamentos)},
-                documento_hash=hash_doc,
-                usuario=cmd.usuario,
-            )
-
-            resultado.sucesso = True
+                uow.commit()
+                resultado.sucesso = True
 
         except Exception as e:
-            import traceback
             resultado.erros.append(str(e))
             self._bus.publicar(DocumentoErro(
                 correlacao_id=correlacao,

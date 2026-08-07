@@ -1,11 +1,11 @@
-"""Teste de integração — ProcessarDocumentoUseCase com ParserFactory.
+"""Teste de integração — ProcessarDocumentoUseCase com ParserFactory + UnitOfWork.
 
 Verifica o fluxo completo:
   arquivo → DetectorDocumento → ParserFactory → ClassificationPort
-  → PolicyEngine → AuditChain → ExportadorCSV → ResultadoProcessamento
+  → PolicyEngine → UnitOfWork/AuditRepository → ExportadorCSV → ResultadoProcessamento
 
-Usa implementações reais onde possível.
-Doubles apenas para EventBus (sem efeitos colaterais) e AuditChain (arquivo tmp).
+Usa implementações reais onde possível — SQLite em memória para persistência.
+Doubles apenas para EventBus (sem efeitos colaterais).
 """
 
 from decimal import Decimal
@@ -18,8 +18,9 @@ from core.application.use_cases.processar_documento import (
     ComandoProcessarDocumento,
     ProcessarDocumentoUseCase,
 )
-from core.audit.chain import AuditChain
 from core.events.catalog import BaseEvento, EventBusEmMemoria
+from core.infra.db import SessionFactory
+from core.infra.unit_of_work import UnitOfWork
 from core.parsers.detector import DetectorDocumento
 from core.pipeline.parser_factory import ParserFactory
 from core.policies.engine import PolicyEngine
@@ -40,12 +41,14 @@ def pasta_saida(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def audit(tmp_path: Path) -> AuditChain:
-    return AuditChain(tmp_path / "audit.jsonl")
+def sf() -> SessionFactory:
+    factory = SessionFactory("sqlite:///:memory:")
+    factory.criar_tabelas()
+    return factory
 
 
 @pytest.fixture
-def use_case(tmp_path: Path, pasta_saida: Path, audit: AuditChain) -> ProcessarDocumentoUseCase:
+def use_case(sf: SessionFactory, pasta_saida: Path) -> ProcessarDocumentoUseCase:
     from core.domain.entities import CodigoConta
     from core.rule_engine.rule_entity import RegraClassificacaoV2
 
@@ -75,7 +78,7 @@ def use_case(tmp_path: Path, pasta_saida: Path, audit: AuditChain) -> ProcessarD
         parser_factory=ParserFactory(),
         classification_port=RegrasDeterministicasPlugin(regras=regras, fornecedores=[]),
         policy_engine=PolicyEngine(limite_aprovacao_simples=Decimal("10000.00")),
-        audit_chain=audit,
+        session_factory=sf,
         event_bus=EventBusEmMemoria(),
         exporter=ExportadorCSV(),
         pasta_saida=pasta_saida,
@@ -223,42 +226,50 @@ class TestProcessarNFe:
 
 
 # =============================================================
-# TESTES — Auditoria
+# TESTES — Auditoria via banco (substituiu JSONL)
 # =============================================================
 
 class TestAuditoria:
-    def _ler_eventos(self, audit) -> list[dict]:
-        import json
-        if not audit._arquivo.exists():
-            return []
-        with open(audit._arquivo, encoding="utf-8") as f:
-            return [json.loads(linha) for linha in f if linha.strip()]
-
-    def test_audit_registra_eventos(self, use_case, csv_nubank, audit):
+    def test_audit_registra_eventos(self, use_case, csv_nubank, sf):
         use_case.executar(ComandoProcessarDocumento(
             filepath=csv_nubank,
             usuario="auditado",
             empresa_id="empresa-001",
         ))
-        assert len(self._ler_eventos(audit)) > 0
+        with UnitOfWork(sf) as uow:
+            eventos = uow.audit.listar_por_empresa("empresa-001")
+            assert len(eventos) > 0
 
-    def test_audit_tem_documento_recebido(self, use_case, csv_nubank, audit):
+    def test_audit_tem_documento_recebido(self, use_case, csv_nubank, sf):
         use_case.executar(ComandoProcessarDocumento(
             filepath=csv_nubank,
             usuario="auditado",
             empresa_id="empresa-001",
         ))
-        tipos = [e["tipo"] for e in self._ler_eventos(audit)]
-        assert "DOCUMENTO_RECEBIDO" in tipos
+        with UnitOfWork(sf) as uow:
+            tipos = [e["tipo"] for e in uow.audit.listar_por_empresa("empresa-001")]
+            assert "DOCUMENTO_RECEBIDO" in tipos
 
-    def test_audit_tem_lancamento_gerado(self, use_case, csv_nubank, audit):
+    def test_audit_tem_lancamento_gerado(self, use_case, csv_nubank, sf):
         use_case.executar(ComandoProcessarDocumento(
             filepath=csv_nubank,
             usuario="auditado",
             empresa_id="empresa-001",
         ))
-        tipos = [e["tipo"] for e in self._ler_eventos(audit)]
-        assert "LANCAMENTO_GERADO" in tipos
+        with UnitOfWork(sf) as uow:
+            tipos = [e["tipo"] for e in uow.audit.listar_por_empresa("empresa-001")]
+            assert "LANCAMENTO_GERADO" in tipos
+
+    def test_audit_integridade_chain(self, use_case, csv_nubank, sf):
+        use_case.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank,
+            usuario="auditado",
+            empresa_id="empresa-001",
+        ))
+        with UnitOfWork(sf) as uow:
+            ok, erros = uow.audit.verificar_integridade()
+            assert ok is True
+            assert erros == []
 
 
 # =============================================================
@@ -270,13 +281,15 @@ class TestEventBus:
         from core.domain.entities import CodigoConta
         from core.rule_engine.rule_entity import RegraClassificacaoV2
 
+        sf = SessionFactory("sqlite:///:memory:")
+        sf.criar_tabelas()
         bus = EventBusEmMemoria()
         uc = ProcessarDocumentoUseCase(
             detector=DetectorDocumento(),
             parser_factory=ParserFactory(),
             classification_port=RegrasDeterministicasPlugin(regras=[], fornecedores=[]),
             policy_engine=PolicyEngine(),
-            audit_chain=AuditChain(tmp_path / "audit.jsonl"),
+            session_factory=sf,
             event_bus=bus,
             exporter=ExportadorCSV(),
             pasta_saida=pasta_saida,
