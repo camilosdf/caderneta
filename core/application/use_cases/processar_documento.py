@@ -26,6 +26,11 @@ from core.infra.db.session import SessionFactory
 from core.infra.unit_of_work import UnitOfWork
 from core.policies.engine import PolicyEngine
 from core.ports.classification import ClassificationPort
+from core.rule_engine.lancamento_service import (
+    CentroCustoObrigatorioError,
+    ContaNaoLancavelError,
+    LancamentoService,
+)
 
 
 @dataclass
@@ -73,6 +78,7 @@ class ProcessarDocumentoUseCase:
         event_bus: EventBusPort,
         exporter,           # ExportadorCSV
         pasta_saida: Path,
+        lancamento_service: Optional[LancamentoService] = None,
     ):
         self._detector = detector
         self._parser_factory = parser_factory
@@ -82,6 +88,7 @@ class ProcessarDocumentoUseCase:
         self._bus = event_bus
         self._exporter = exporter
         self._pasta_saida = pasta_saida
+        self._lancamento_service = lancamento_service or LancamentoService()
 
     def executar(self, cmd: ComandoProcessarDocumento) -> ResultadoProcessamento:
         from uuid import uuid4
@@ -151,15 +158,26 @@ class ProcessarDocumentoUseCase:
                         doc.nome_emitente or ""
                     )
                     sugestao = self._classification.sugerir_categoria(doc, None)
-                    lancamento = self._construir_lancamento(doc, sugestao, norm, correlacao)
+
+                    try:
+                        lancamento = self._lancamento_service.processar(doc, sugestao)
+                    except (ValueError, ContaNaoLancavelError, CentroCustoObrigatorioError) as e:
+                        # Falha de validação contábil (período fechado, conta
+                        # não lançável, centro de custo ausente): o lançamento
+                        # é construído sem validação e fica marcado para revisão.
+                        lancamento = self._lancamento_service.construir(doc, sugestao)
+                        resultado.avisos.append(
+                            f"Lançamento de '{doc.nome_emitente}' requer revisão: {e}"
+                        )
 
                     politica = self._policy.avaliar_pre_aprovacao(
                         confidence=lancamento.confidence or 0.0,
-                        valor=lancamento.valor_total.valor if lancamento.splits else __import__("decimal").Decimal("0"),
+                        valor=lancamento.valor_total.valor,
                     )
                     from core.policies.engine import ResultadoPolitica
                     lancamento.pre_aprovado = (
-                        politica.resultado == ResultadoPolitica.PERMITIDO
+                        bool(lancamento.splits)
+                        and politica.resultado == ResultadoPolitica.PERMITIDO
                     )
 
                     lancamentos.append(lancamento)
@@ -235,48 +253,3 @@ class ProcessarDocumentoUseCase:
             ))
 
         return resultado
-
-    def _construir_lancamento(self, doc, sugestao, norm, correlacao_id):
-        """Constrói um Lancamento a partir do documento e da sugestão."""
-        from core.domain.entities import (
-            Lancamento, Split, NaturezaLancamento, Dinheiro,
-            StatusLancamento, NivelAprovacao
-        )
-        from decimal import Decimal
-
-        valor = doc.valor_liquido or doc.valor_total
-        if valor is None:
-            valor = Dinheiro(Decimal("0"))
-
-        splits = []
-        if sugestao.conta_debito and sugestao.conta_credito:
-            splits = [
-                Split(
-                    conta=sugestao.conta_debito,
-                    natureza=NaturezaLancamento.DEBITO,
-                    valor=valor,
-                ),
-                Split(
-                    conta=sugestao.conta_credito,
-                    natureza=NaturezaLancamento.CREDITO,
-                    valor=valor,
-                ),
-            ]
-
-        l = Lancamento(
-            empresa_id=doc.empresa_id if hasattr(doc, "empresa_id") else __import__("uuid").uuid4(),
-            documento_id=doc.id,
-            data_lancamento=doc.data_emissao,
-            descricao=doc.nome_emitente or "SEM DESCRIÇÃO",
-            splits=splits,
-            categoria=sugestao.categoria,
-            confidence=sugestao.confidence,
-            metodo_classificacao=sugestao.metodo,
-            status=StatusLancamento.PENDENTE,
-            nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
-        )
-
-        if splits:
-            l.validar()
-
-        return l

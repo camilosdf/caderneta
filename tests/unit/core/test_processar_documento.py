@@ -308,3 +308,104 @@ class TestEventBus:
         tipos = [type(e).__name__ for e in bus.eventos]
         assert "DocumentoRecebido" in tipos
         assert "LancamentoCriado" in tipos
+
+
+# =============================================================
+# TESTES — LancamentoService integrado (Motor Contábil)
+# =============================================================
+
+class TestLancamentoServiceIntegrado:
+    def test_periodo_fechado_marca_lancamento_para_revisao(self, sf, pasta_saida, csv_nubank):
+        from datetime import date
+        from core.domain.entities import CodigoConta, PeriodoContabil, StatusPeriodo
+        from core.rule_engine.rule_entity import RegraClassificacaoV2
+        from core.rule_engine.lancamento_service import LancamentoService
+
+        regra = RegraClassificacaoV2(
+            nome="Transporte",
+            condicao={"descricao_contains_any": ["UBER", "IFOOD"]},
+            categoria="Despesas Operacionais",
+            conta_debito=CodigoConta("4.1.01.001"),
+            conta_credito=CodigoConta("1.1.01.002"),
+            prioridade=10,
+            criada_por="teste",
+        )
+
+        periodo_fechado = PeriodoContabil(ano=2026, mes=6, status=StatusPeriodo.FECHADO)
+        lancamento_service = LancamentoService(periodo_atual=periodo_fechado)
+
+        uc = ProcessarDocumentoUseCase(
+            detector=DetectorDocumento(),
+            parser_factory=ParserFactory(),
+            classification_port=RegrasDeterministicasPlugin(regras=[regra], fornecedores=[]),
+            policy_engine=PolicyEngine(),
+            session_factory=sf,
+            event_bus=EventBusEmMemoria(),
+            exporter=ExportadorCSV(),
+            pasta_saida=pasta_saida,
+            lancamento_service=lancamento_service,
+        )
+
+        resultado = uc.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+
+        # O processamento continua bem-sucedido — o lançamento é gerado
+        # mas marcado para revisão via aviso, não bloqueia o lote inteiro.
+        assert resultado.sucesso is True
+        assert any("revisão" in a for a in resultado.avisos)
+
+    def test_periodo_aberto_nao_gera_avisos_de_periodo(self, sf, pasta_saida, csv_nubank):
+        from core.domain.entities import CodigoConta, PeriodoContabil, StatusPeriodo
+        from core.rule_engine.rule_entity import RegraClassificacaoV2
+        from core.rule_engine.lancamento_service import LancamentoService
+
+        regra = RegraClassificacaoV2(
+            nome="Transporte",
+            condicao={"descricao_contains_any": ["UBER", "IFOOD"]},
+            categoria="Despesas Operacionais",
+            conta_debito=CodigoConta("4.1.01.001"),
+            conta_credito=CodigoConta("1.1.01.002"),
+            prioridade=10,
+            criada_por="teste",
+        )
+
+        periodo_aberto = PeriodoContabil(ano=2026, mes=6, status=StatusPeriodo.ABERTO)
+        lancamento_service = LancamentoService(periodo_atual=periodo_aberto)
+
+        uc = ProcessarDocumentoUseCase(
+            detector=DetectorDocumento(),
+            parser_factory=ParserFactory(),
+            classification_port=RegrasDeterministicasPlugin(regras=[regra], fornecedores=[]),
+            policy_engine=PolicyEngine(),
+            session_factory=sf,
+            event_bus=EventBusEmMemoria(),
+            exporter=ExportadorCSV(),
+            pasta_saida=pasta_saida,
+            lancamento_service=lancamento_service,
+        )
+
+        resultado = uc.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+
+        assert resultado.sucesso is True
+        assert not any("revisão" in a for a in resultado.avisos)
+
+    def test_sem_lancamento_service_usa_default(self, sf, pasta_saida, csv_nubank):
+        """Sem injetar lancamento_service, o use case usa LancamentoService() padrão
+        (sem validação de período/contas) — comportamento retrocompatível."""
+        uc = ProcessarDocumentoUseCase(
+            detector=DetectorDocumento(),
+            parser_factory=ParserFactory(),
+            classification_port=RegrasDeterministicasPlugin(regras=[], fornecedores=[]),
+            policy_engine=PolicyEngine(),
+            session_factory=sf,
+            event_bus=EventBusEmMemoria(),
+            exporter=ExportadorCSV(),
+            pasta_saida=pasta_saida,
+        )
+        resultado = uc.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="teste", empresa_id="empresa-001",
+        ))
+        assert resultado.sucesso is True
