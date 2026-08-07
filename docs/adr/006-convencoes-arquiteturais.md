@@ -47,17 +47,19 @@ ai/* → core/events (somente leitura)
 
 ## Convenções de teste
 
-- `tests/unit/core/` — foco em lógica de domínio e regras, sem rede externa
-  nem GPU. Rodam em segundos.
-  > **Divergência conhecida (pendente de decisão do Comitê):** os testes de
-  > `core/infra/repositories/` e `core/infra/unit_of_work.py` usam SQLite em
-  > memória real (não mockado) dentro de `tests/unit/core/`. Na prática isso
-  > funciona bem — SQLite em memória é rápido e sem dependências externas —
-  > mas contraria a intenção original desta convenção ("sem banco"). Duas
-  > opções para o Comitê decidir: (a) mover esses testes para uma nova pasta
-  > `tests/unit/infra/` com convenção própria, ou (b) atualizar esta
-  > convenção para permitir banco em memória em `tests/unit/`, reservando
-  > `tests/integration/` para PostgreSQL real via Docker Compose.
+- `tests/unit/core/` — sem infraestrutura externa (Postgres real, Docker,
+  Redis, rede, GPU). Rodam em segundos.
+  > **Resolvido (2026-08):** a regra original dizia "sem banco", mas a
+  > intenção sempre foi evitar dependência de **infraestrutura externa**
+  > (serviços que precisam estar de pé, credenciais, rede). SQLite em
+  > memória não se encaixa nesse problema: é hermético (zero dependência
+  > externa, não usa sockets) e não deixa a suíte lenta — o teste mais
+  > lento de toda a suíte de 397 testes leva 0.06s. A regra foi reescrita
+  > para refletir o critério real, e SQLite em memória é uma exceção
+  > explicitamente permitida, condicionada a ser totalmente hermético
+  > (sem arquivo em disco, sem rede). Ver seção
+  > "Verificação automatizada" abaixo para o mecanismo que garante isso
+  > em CI — estático (import proibido) e em runtime (sockets bloqueados).
 - `tests/unit/ai/` — podem usar modelos em memória. Sem GPU obrigatória.
 - `tests/integration/` — requerem banco e Redis (Docker Compose). Diretório
   criado, ainda sem testes até a Etapa 6 (Interface Web).
@@ -93,12 +95,32 @@ Eventos são imutáveis (`frozen=True`). Nunca alterar um evento publicado.
 
 ```bash
 # Executado em todo PR
-python infra/scripts/verificar_isolamento.py    # core não importa ai — implementado
+python infra/scripts/verificar_isolamento.py           # core não importa ai
+python infra/scripts/verificar_testes_hermeticos.py    # tests/unit/ sem infra externa
+pytest tests/unit/ -p no:cacheprovider                 # sockets bloqueados via pytest-socket
 pytest tests/unit/core/ --cov=core --cov-report=term-missing  # 397 testes, meta 75%+
 ```
 
-> **Nota:** `verificar_convencoes.py` (nomenclatura/estrutura) e
-> `pytest --timeout=2` para checagem de velocidade eram citados na versão
-> original deste ADR mas nunca foram implementados. A única verificação
-> automatizada ativa hoje é o isolamento Core/AI. Nomenclatura e estrutura
-> são revisadas manualmente em code review.
+**Isolamento Core/AI** — análise estática de imports (AST), impede `core/`
+de importar `ai/`.
+
+**Hermeticidade de `tests/unit/`** — dois mecanismos independentes,
+implementados em 2026-08 junto com a reescrita da regra "sem banco" →
+"sem infraestrutura externa":
+
+1. **Estático** (`infra/scripts/verificar_testes_hermeticos.py`): varre
+   `tests/unit/*.py` e falha se encontrar import de bibliotecas de rede/infra
+   externa (`psycopg`, `psycopg2`, `docker`, `redis`, `requests`, `httpx`,
+   `boto3`) ou strings de conexão não-SQLite (`postgresql://`,
+   `postgresql+psycopg`).
+2. **Runtime** (`pytest-socket`, via `tests/unit/conftest.py`): desabilita
+   toda chamada de socket durante a execução de `tests/unit/`. Como SQLite
+   é local (não usa sockets), a suíte inteira passa sem alterações — prova
+   automática de que já éramos herméticos antes desta formalização.
+   `tests/integration/` não tem essa restrição, pois depende de fato de
+   Docker Compose (Postgres, Redis).
+
+> **Nota:** `verificar_convencoes.py` (nomenclatura/estrutura genérica) e
+> `pytest --timeout=2` eram citados na versão original deste ADR mas nunca
+> foram implementados. Nomenclatura e estrutura continuam revisadas
+> manualmente em code review.
