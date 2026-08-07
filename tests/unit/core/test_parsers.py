@@ -15,7 +15,7 @@ from core.domain.entities import (
     NaturezaLancamento,
     TipoDocumento,
 )
-from core.motores_detector import DetectorDocumento, TipoNaoSuportadoError
+from core.parsers.detector import DetectorDocumento, TipoNaoSuportadoError
 
 
 # =============================================================
@@ -179,7 +179,7 @@ class TestDetectorDocumento:
 
 class TestParsearNubank:
     def _parsear(self, filepath: Path):
-        from core.motores_parsers_csv import _parsear_nubank
+        from core.parsers.csv.nubank import parsear_nubank as _parsear_nubank
         return list(_parsear_nubank(filepath))
 
     def test_parseia_tres_transacoes(self, tmp_csv_nubank: Path) -> None:
@@ -217,7 +217,7 @@ class TestParsearNubank:
             assert doc.tipo == TipoDocumento.CSV
 
     def test_ignora_linhas_invalidas(self, tmp_path: Path) -> None:
-        from core.motores_parsers_csv import _parsear_nubank
+        from core.parsers.csv.nubank import parsear_nubank as _parsear_nubank
         f = tmp_path / "nubank_ruim.csv"
         f.write_text(
             "date,title,amount\n"
@@ -230,7 +230,7 @@ class TestParsearNubank:
         assert len(docs) == 2
 
     def test_debito_tem_natureza_debito(self, tmp_path: Path) -> None:
-        from core.motores_parsers_csv import _parsear_nubank
+        from core.parsers.csv.nubank import parsear_nubank as _parsear_nubank
         f = tmp_path / "nubank_debito.csv"
         f.write_text(
             "date,title,amount\n"
@@ -248,7 +248,7 @@ class TestParsearNubank:
 
 class TestParsearInter:
     def _parsear(self, filepath: Path):
-        from core.motores_parsers_csv import _parsear_inter
+        from core.parsers.csv.inter import parsear_inter as _parsear_inter
         return list(_parsear_inter(filepath))
 
     def test_parseia_tres_transacoes(self, tmp_csv_inter: Path) -> None:
@@ -280,7 +280,7 @@ class TestParsearInter:
 
 class TestParsearBradesco:
     def _parsear(self, filepath: Path):
-        from core.motores_parsers_csv import _parsear_bradesco
+        from core.parsers.csv.bradesco import parsear_bradesco as _parsear_bradesco
         return list(_parsear_bradesco(filepath))
 
     def test_parseia_transacoes(self, tmp_csv_bradesco: Path) -> None:
@@ -299,7 +299,7 @@ class TestParsearBradesco:
 
 class TestDetectarBanco:
     def test_banco_desconhecido_lanca_erro(self, tmp_path: Path) -> None:
-        from core.motores_parsers_csv import BancoNaoIdentificadoError, detectar_banco
+        from core.parsers.csv import BancoNaoIdentificadoError, detectar_banco
         f = tmp_path / "desconhecido.csv"
         f.write_text("Col1;Col2;Col3\nA;B;C\n", encoding="utf-8-sig")
         with pytest.raises(BancoNaoIdentificadoError):
@@ -312,21 +312,21 @@ class TestDetectarBanco:
 
 class TestParseDateBr:
     def test_formato_ddmmyyyy(self) -> None:
-        from core.motores_parsers_csv import _parse_data_br
+        from core.parsers.csv.base import parse_data_br as _parse_data_br
         from datetime import date
         assert _parse_data_br("01/06/2026") == date(2026, 6, 1)
 
     def test_formato_ddmmyy(self) -> None:
-        from core.motores_parsers_csv import _parse_data_br
+        from core.parsers.csv.base import parse_data_br as _parse_data_br
         from datetime import date
         assert _parse_data_br("01/06/26") == date(2026, 6, 1)
 
     def test_formato_iso(self) -> None:
-        from core.motores_parsers_csv import _parse_data_br
+        from core.parsers.csv.base import parse_data_br as _parse_data_br
         from datetime import date
         assert _parse_data_br("2026-06-01") == date(2026, 6, 1)
 
     def test_data_invalida_lanca_erro(self) -> None:
-        from core.motores_parsers_csv import _parse_data_br
+        from core.parsers.csv.base import parse_data_br as _parse_data_br
         with pytest.raises(ValueError):
             _parse_data_br("DATA_INVALIDA")

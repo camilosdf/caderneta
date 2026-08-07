@@ -408,9 +408,9 @@ def _processar_arquivo(arquivo: Path, usuario: str, saida: Path, audit, bus) -> 
     Tenta processar um arquivo com os parsers disponíveis.
     Retorna dict com resultado padronizado.
     """
-    from core.motores_detector import DetectorDocumento, TipoNaoSuportadoError
-    from core.motores_parsers_ofx import OFXParser
-    from core.motores_parsers_csv import parsear_csv
+    from core.parsers.detector import DetectorDocumento, TipoNaoSuportadoError
+    from core.parsers.ofx import OFXParser
+    from core.parsers.csv import parsear_csv
     from core.rule_engine.classification_impl import RegrasDeterministicasPlugin
     from core.adapters.csv_exporter import ExportadorCSV
     from core.domain.entities import TipoDocumento
@@ -544,7 +544,7 @@ def _processar_arquivo(arquivo: Path, usuario: str, saida: Path, audit, bus) -> 
 # Atalhos para imports internos que a CLI usa
 # (evita importar diretamente — centraliza aqui)
 try:
-    from core.motores_detector import DetectorDocumento, TipoNaoSuportadoError  # type: ignore
+    from core.parsers.detector import DetectorDocumento, TipoNaoSuportadoError  # type: ignore
 except ImportError:
     # Durante instalação podem não estar disponíveis ainda
     pass
