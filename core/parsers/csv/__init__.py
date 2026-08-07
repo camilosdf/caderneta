@@ -50,6 +50,9 @@ def detectar_banco(filepath: Path) -> str:
         return "bradesco"
     if "NUBANK" in conteudo or "NU PAGAMENTOS" in conteudo:
         return "nubank"
+    # Nubank: detectado pelo cabeçalho característico date,title,amount
+    if "DATE" in conteudo and "TITLE" in conteudo and "AMOUNT" in conteudo:
+        return "nubank"
     if "SANTANDER" in conteudo:
         return "santander"
 

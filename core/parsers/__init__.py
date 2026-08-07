@@ -41,3 +41,6 @@ __all__ = [
     "parsear_santander",
     "BancoNaoIdentificadoError",
 ]
+
+# Adaptadores e Protocol
+from core.parsers.adapters import CSVParser, NFeParser, ParserProtocol  # noqa: F401
