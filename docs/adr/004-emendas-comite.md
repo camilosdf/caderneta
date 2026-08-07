@@ -1,4 +1,4 @@
-# ADR 004 — Emendas E-09, E-10 e E-11 aprovadas pelo Comitê
+# ADR 004 — Emendas E-09, E-10, E-11 e E-12 aprovadas pelo Comitê
 
 **Status:** Aceito  
 **Data:** 2026-07  
@@ -74,7 +74,46 @@ código de produção.
 
 ---
 
-## Cronograma revisado (Sprints overlapped)
+## Emenda E-12 — Conclusão fora de ordem: Etapa 9 (GnuCash) antes das Etapas 6–8
+
+**Data da emenda:** 2026-08 (posterior às demais — registrada após o fato,
+não antes)
+
+**Problema identificado:** Seguindo a mesma lógica de valor de negócio da
+Emenda E-10, o trabalho real avançou diretamente da Etapa 5 (Persistência +
+Auditoria) para o aprofundamento da Etapa 4 (Motor Contábil: `LancamentoService`,
+Período Contábil, Centro de Custo) e da Etapa 9 (Integração GnuCash completa:
+persistência de `Lancamento`/`Documento`, status `EXPORTADO`, conciliação por
+GUID) — sem completar as Etapas 6 (Interface Web), 7 (IA) e 8 (Conciliação
+avançada/Open Finance).
+
+Isso colocou o projeto em uma situação não prevista pelo ADR 007: o número de
+versão (`FASE.ETAPA.REVISÃO`) assume implicitamente que etapas são concluídas
+em ordem. Usar `0.9.x` sem qualificação sugeriria a um auditor externo que as
+Etapas 6, 7 e 8 também estão prontas — o que é falso.
+
+**Decisão:** O Comitê autoriza conclusão de etapas fora de ordem quando
+justificada por valor de negócio direto ao contador/CRC — mesmo racional já
+usado na E-10. A partir desta emenda:
+
+1. O dígito `ETAPA` do versionamento (ADR 007) passa a refletir a **etapa de
+   maior valor de negócio efetivamente entregue**, não necessariamente a
+   etapa mais alta com conclusão contígua.
+2. Toda vez que essa situação ocorrer, o `CHANGELOG` (ou nota equivalente no
+   README) deve declarar explicitamente **quais etapas intermediárias
+   permanecem pendentes**, para que a lacuna nunca fique implícita.
+3. Esta emenda **não se aplica** à transição `0.x.x → 1.0.0`: homologação de
+   produção continua exigindo todas as etapas revisadas e aprovação formal do
+   Contador CRC, independentemente da ordem em que foram concluídas.
+
+**Situação registrada nesta emenda (2026-08):**
+`VERSAO_ATUAL = "0.9.0"` — Etapa 9 (Integração GnuCash) concluída.
+**Pendentes:** Etapa 6 (Interface Web), Etapa 7 (IA), Etapa 8 (Conciliação
+avançada/Open Finance).
+
+---
+
+
 
 | Sprint | Core (obrigatório) | Paralelo (AI/Infra) |
 |--------|-------------------|---------------------|

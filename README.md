@@ -171,10 +171,11 @@ caderneta status
 | 8 — Conciliação avançada | Open Finance, motor de diferenças | 🔜 |
 | Homologação | Aprovação formal do CRC | 🔜 |
 
-> **Nota:** a constante `VERSAO_ATUAL` em `core/versao.py` ainda não foi
-> sincronizada com o histórico de tags do repositório (`v0.004.x` a
-> `v0.009.000`). Atualizar em conjunto com a próxima revisão formal de
-> versionamento (ADR 007).
+> **Nota (Emenda E-12, ADR 004):** a Etapa 9 foi concluída fora de ordem —
+> as Etapas 6 (Interface Web), 7 (IA) e 8 (Conciliação avançada) ainda
+> estão pendentes apesar do dígito `ETAPA=9` no versionamento. Essa
+> conclusão fora de sequência segue o mesmo racional de valor de negócio
+> já usado na Emenda E-10 (CLI First).
 
 ---
 
