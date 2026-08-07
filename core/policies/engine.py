@@ -15,6 +15,8 @@ política que estava ativa — reproduzível em auditoria futura.
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from core.domain.entities import Usuario
+
 _UTC = timezone.utc
 
 
@@ -75,16 +77,32 @@ class PolicyEngine:
     def avaliar_aprovacao(
         self,
         valor_lancamento: Decimal,
-        aprovador_id: str,
+        aprovador: Usuario,
         criador_id: str,
-        nivel_atual: int = 1,
     ) -> AvaliacaoPolitica:
         """
         Verifica se o aprovador pode aprovar este lançamento.
-        Aplica segregação de funções e limites de valor.
+
+        Conecta as capacidades já modeladas em Usuario (pode_aprovar(),
+        pode_aprovar_alto_valor()) ao fluxo real de decisão — a versão
+        anterior deste método recebia um nivel_atual: int que o chamador
+        podia definir livremente sem nenhuma verificação de papel
+        (achado registrado no ADR 008, corrigido no W3).
         """
+        # Política: papel precisa ter a capacidade de aprovar, ponto de partida
+        if not aprovador.pode_aprovar():
+            return AvaliacaoPolitica(
+                resultado=ResultadoPolitica.BLOQUEADO,
+                politica_nome="papel_sem_permissao",
+                versao_politica=self._versao,
+                motivo=f"Papel '{aprovador.papel}' não tem permissão para "
+                       f"aprovar lançamentos.",
+                acao_requerida="Encaminhar para usuário com papel contador, "
+                               "supervisor ou admin.",
+            )
+
         # Política: segregação de funções
-        if aprovador_id == criador_id:
+        if str(aprovador.id) == criador_id:
             return AvaliacaoPolitica(
                 resultado=ResultadoPolitica.BLOQUEADO,
                 politica_nome="segregacao_funcoes",
@@ -93,15 +111,29 @@ class PolicyEngine:
                 acao_requerida="Designar aprovador diferente do criador.",
             )
 
-        # Política: valor alto exige dois aprovadores
-        if valor_lancamento > self._limite and nivel_atual < 2:
+        # Política: valor alto exige papel com capacidade de alto valor.
+        # politica_nome fica "aprovacao_alto_valor" tanto no bloqueio quanto
+        # na liberação — permite ao chamador (api/) saber que esta era uma
+        # aprovação de alto valor sem reimplementar a comparação de limite
+        # (a decisão de negócio inteira permanece aqui, não na camada Web).
+        if valor_lancamento > self._limite:
+            if not aprovador.pode_aprovar_alto_valor():
+                return AvaliacaoPolitica(
+                    resultado=ResultadoPolitica.REQUER_ACAO,
+                    politica_nome="aprovacao_alto_valor",
+                    versao_politica=self._versao,
+                    motivo=f"Valor R$ {valor_lancamento:,.2f} acima do limite de "
+                           f"R$ {self._limite:,.2f} — papel '{aprovador.papel}' não "
+                           f"tem permissão para aprovação de alto valor.",
+                    acao_requerida="Encaminhar para aprovação de Supervisor ou Admin.",
+                )
             return AvaliacaoPolitica(
-                resultado=ResultadoPolitica.REQUER_ACAO,
+                resultado=ResultadoPolitica.PERMITIDO,
                 politica_nome="aprovacao_alto_valor",
                 versao_politica=self._versao,
-                motivo=f"Valor R$ {valor_lancamento:,.2f} acima do limite de "
-                       f"R$ {self._limite:,.2f} — exige segundo aprovador.",
-                acao_requerida="Encaminhar para aprovação de Supervisor.",
+                motivo=f"Valor R$ {valor_lancamento:,.2f} acima do limite — "
+                       f"aprovado por papel '{aprovador.papel}' com permissão "
+                       f"de alto valor.",
             )
 
         return AvaliacaoPolitica(

@@ -156,10 +156,11 @@ class TestValidarPeriodo:
         service.validar(lanc)  # não deve lançar
 
     def test_periodo_fechado_bloqueia_lancamento(self) -> None:
+        from core.rule_engine.lancamento_service import PeriodoFechadoError
         periodo = PeriodoContabil(ano=2024, mes=3, status=StatusPeriodo.FECHADO)
         service = LancamentoService(periodo_atual=periodo)
         lanc = service.construir(_doc(data=date(2024, 3, 15)), _sugestao())
-        with pytest.raises(ValueError, match="fechado"):
+        with pytest.raises(PeriodoFechadoError, match="fechado"):
             service.validar(lanc)
 
     def test_periodo_diferente_da_data_nao_bloqueia(self) -> None:
@@ -275,9 +276,10 @@ class TestProcessar:
         assert lanc.splits == []
 
     def test_processar_propaga_erro_de_periodo_fechado(self) -> None:
+        from core.rule_engine.lancamento_service import PeriodoFechadoError
         periodo = PeriodoContabil(ano=2024, mes=3, status=StatusPeriodo.FECHADO)
         service = LancamentoService(periodo_atual=periodo)
-        with pytest.raises(ValueError, match="fechado"):
+        with pytest.raises(PeriodoFechadoError, match="fechado"):
             service.processar(_doc(data=date(2024, 3, 15)), _sugestao())
 
     def test_processar_end_to_end_completo(self) -> None:

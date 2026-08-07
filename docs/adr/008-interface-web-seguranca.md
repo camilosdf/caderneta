@@ -416,18 +416,32 @@ equipe multidisciplinar (Internal Controls Specialist, Contador CRC,
 Arquiteto de Software) e foi ratificado. **Status: Aceito.** O W1 pode
 começar.
 
-**Tarefas técnicas complementares identificadas na revisão** (fora do
-escopo deste ADR, mas pré-requisito para W3 funcionar como descrito):
+**Tarefas técnicas complementares identificadas na revisão** — ✅ ambas
+resolvidas no W3:
 
-1. Conectar `PolicyEngine.avaliar_aprovacao()` às capacidades já
-   modeladas em `Usuario` (`pode_aprovar()`, `pode_aprovar_alto_valor()`,
-   `pode_fechar_periodo()`) — hoje `PolicyEngine` não usa papel algum.
-   Pode virar um ADR complementar ou apenas uma tarefa técnica dentro do
-   W1/W3, a critério da equipe.
-2. Corrigir `LancamentoService._validar_periodo()` para levantar
-   `PeriodoFechadoError` (já definida, nunca usada) em vez de `ValueError`
-   genérico — necessário para o mapeamento HTTP 409 da tabela acima
-   funcionar como descrito.
+1. ✅ **Resolvido.** `PolicyEngine.avaliar_aprovacao()` agora recebe o
+   `Usuario` completo e delega diretamente a `pode_aprovar()` e
+   `pode_aprovar_alto_valor()` — eliminado o parâmetro `nivel_atual: int`
+   que qualquer chamador podia definir livremente sem nenhuma verificação
+   de papel real. `politica_nome` sinaliza `"aprovacao_alto_valor"` tanto
+   no bloqueio quanto na liberação, permitindo à API saber quando exigir
+   justificativa obrigatória sem reimplementar a comparação de limite.
+2. ✅ **Resolvido.** `LancamentoService._validar_periodo()` agora captura
+   o `ValueError` de `PeriodoContabil.verificar_aberto()` e relança como
+   `PeriodoFechadoError` — o mapeamento HTTP 409 da tabela acima funciona
+   como descrito. Efeito colateral pego em teste: `ProcessarDocumentoUseCase`
+   só capturava `ValueError` na fila de exceções tratadas por documento —
+   sem o ajuste correspondente, `PeriodoFechadoError` (que não herda de
+   `ValueError`) teria vazado e quebrado o pipeline silenciosamente em
+   produção. Corrigido junto.
+
+**Limitação conhecida, registrada mas não resolvida no W3:** `Lancamento`
+não tem campo de "criado por usuário" — lançamentos hoje são gerados pelo
+pipeline automatizado (CLI), não por humanos via API. A checagem de
+segregação de funções em `PolicyEngine.avaliar_aprovacao()` recebe
+`criador_id=""` nos endpoints de aprovação, o que efetivamente desativa
+essa política para o fluxo atual (nunca há colisão com string vazia).
+Revisar quando lançamentos passarem a ser criados por usuários via API.
 
 Sequência de implementação:
 

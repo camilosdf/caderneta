@@ -150,7 +150,7 @@ class LancamentoService:
         if self._periodos:
             periodo = self._periodos.get(competencia)
             if periodo is not None:
-                periodo.verificar_aberto()
+                self._verificar_periodo_aberto(periodo)
             return
 
         # Prioridade 2: período único injetado (uso simples/testes)
@@ -158,7 +158,19 @@ class LancamentoService:
             return
         if (self._periodo.ano, self._periodo.mes) != competencia:
             return  # período informado não corresponde à data do lançamento
-        self._periodo.verificar_aberto()
+        self._verificar_periodo_aberto(self._periodo)
+
+    def _verificar_periodo_aberto(self, periodo: PeriodoContabil) -> None:
+        """Relança como PeriodoFechadoError — a exceção específica já
+        estava definida neste módulo mas nunca era efetivamente lançada;
+        o código anterior deixava propagar o ValueError genérico de
+        PeriodoContabil.verificar_aberto() (achado registrado no ADR 008,
+        corrigido no W3 — necessário para o mapeamento HTTP 409 funcionar
+        como descrito no ADR)."""
+        try:
+            periodo.verificar_aberto()
+        except ValueError as e:
+            raise PeriodoFechadoError(str(e)) from e
 
     def _validar_contas_e_centro_custo(self, lancamento: Lancamento) -> None:
         for split in lancamento.splits:

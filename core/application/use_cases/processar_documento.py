@@ -30,6 +30,7 @@ from core.rule_engine.lancamento_service import (
     CentroCustoObrigatorioError,
     ContaNaoLancavelError,
     LancamentoService,
+    PeriodoFechadoError,
 )
 from shared.identifiers import empresa_id_from_string
 
@@ -172,7 +173,7 @@ class ProcessarDocumentoUseCase:
 
                     try:
                         lancamento = self._lancamento_service.processar(doc, sugestao)
-                    except (ValueError, ContaNaoLancavelError, CentroCustoObrigatorioError) as e:
+                    except (ValueError, ContaNaoLancavelError, CentroCustoObrigatorioError, PeriodoFechadoError) as e:
                         # Falha de validação contábil (período fechado, conta
                         # não lançável, centro de custo ausente): o lançamento
                         # é construído sem validação e fica marcado para revisão.

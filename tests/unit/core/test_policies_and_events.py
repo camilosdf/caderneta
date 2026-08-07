@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from core.domain.entities import Usuario
 from core.events.catalog import (
     EventBusEmMemoria,
     LancamentoCriado,
@@ -12,6 +13,10 @@ from core.events.catalog import (
     RegraAlterada,
 )
 from core.policies.engine import PolicyEngine, ResultadoPolitica
+
+
+def _usuario(papel: str) -> Usuario:
+    return Usuario(email=f"{papel}@x.com", nome=papel.title(), papel=papel)
 
 
 class TestPolicyEngine:
@@ -22,39 +27,78 @@ class TestPolicyEngine:
     def test_aprovacao_simples_permitida(self, engine):
         r = engine.avaliar_aprovacao(
             valor_lancamento=Decimal("1000.00"),
-            aprovador_id="contador",
-            criador_id="operador",
+            aprovador=_usuario("contador"),
+            criador_id="operador-uuid",
         )
         assert r.resultado == ResultadoPolitica.PERMITIDO
 
-    def test_segregacao_funcoes_bloqueia(self, engine):
-        """Criador não pode ser o mesmo que o aprovador."""
+    def test_papel_sem_permissao_bloqueia(self, engine):
+        """Operador não tem pode_aprovar() — bloqueado antes de qualquer
+        outra checagem, independentemente de valor ou segregação."""
         r = engine.avaliar_aprovacao(
             valor_lancamento=Decimal("100.00"),
-            aprovador_id="usuario_x",
-            criador_id="usuario_x",
+            aprovador=_usuario("operador"),
+            criador_id="outro-uuid",
+        )
+        assert r.resultado == ResultadoPolitica.BLOQUEADO
+        assert r.politica_nome == "papel_sem_permissao"
+
+    def test_segregacao_funcoes_bloqueia(self, engine):
+        """Criador não pode ser o mesmo que o aprovador."""
+        usuario_x = _usuario("contador")
+        r = engine.avaliar_aprovacao(
+            valor_lancamento=Decimal("100.00"),
+            aprovador=usuario_x,
+            criador_id=str(usuario_x.id),
         )
         assert r.resultado == ResultadoPolitica.BLOQUEADO
         assert "segregacao" in r.politica_nome
 
-    def test_alto_valor_exige_segundo_aprovador(self, engine):
+    def test_alto_valor_exige_papel_com_permissao(self, engine):
+        """Contador não tem pode_aprovar_alto_valor() — REQUER_ACAO."""
         r = engine.avaliar_aprovacao(
             valor_lancamento=Decimal("6000.00"),
-            aprovador_id="contador",
-            criador_id="operador",
-            nivel_atual=1,
+            aprovador=_usuario("contador"),
+            criador_id="operador-uuid",
         )
         assert r.resultado == ResultadoPolitica.REQUER_ACAO
         assert r.acao_requerida is not None
 
-    def test_alto_valor_segundo_nivel_permitido(self, engine):
+    def test_alto_valor_supervisor_permitido(self, engine):
+        """Supervisor tem pode_aprovar_alto_valor() — PERMITIDO."""
         r = engine.avaliar_aprovacao(
             valor_lancamento=Decimal("6000.00"),
-            aprovador_id="supervisor",
-            criador_id="operador",
-            nivel_atual=2,
+            aprovador=_usuario("supervisor"),
+            criador_id="operador-uuid",
         )
         assert r.resultado == ResultadoPolitica.PERMITIDO
+
+    def test_alto_valor_admin_permitido(self, engine):
+        r = engine.avaliar_aprovacao(
+            valor_lancamento=Decimal("6000.00"),
+            aprovador=_usuario("admin"),
+            criador_id="operador-uuid",
+        )
+        assert r.resultado == ResultadoPolitica.PERMITIDO
+
+    def test_alto_valor_permitido_sinaliza_politica_alto_valor(self, engine):
+        """politica_nome permite ao chamador saber que foi alto valor sem
+        reimplementar a comparação de limite (ADR 008 — justificativa
+        obrigatória em aprovação excepcional)."""
+        r = engine.avaliar_aprovacao(
+            valor_lancamento=Decimal("6000.00"),
+            aprovador=_usuario("supervisor"),
+            criador_id="operador-uuid",
+        )
+        assert r.politica_nome == "aprovacao_alto_valor"
+
+    def test_valor_normal_sinaliza_politica_padrao(self, engine):
+        r = engine.avaliar_aprovacao(
+            valor_lancamento=Decimal("100.00"),
+            aprovador=_usuario("contador"),
+            criador_id="operador-uuid",
+        )
+        assert r.politica_nome == "aprovacao_padrao"
 
     def test_periodo_fechado_bloqueia(self, engine):
         fechados = {(2026, 5)}
@@ -90,14 +134,14 @@ class TestPolicyEngine:
     def test_avaliacao_tem_versao_politica(self, engine):
         r = engine.avaliar_aprovacao(
             valor_lancamento=Decimal("100.00"),
-            aprovador_id="a",
+            aprovador=_usuario("contador"),
             criador_id="b",
         )
         assert r.versao_politica >= 1
 
     def test_avaliacao_tem_id_unico(self, engine):
-        r1 = engine.avaliar_aprovacao(Decimal("100"), "a", "b")
-        r2 = engine.avaliar_aprovacao(Decimal("100"), "c", "d")
+        r1 = engine.avaliar_aprovacao(Decimal("100"), _usuario("contador"), "b")
+        r2 = engine.avaliar_aprovacao(Decimal("100"), _usuario("contador"), "d")
         assert r1.avaliacao_id != r2.avaliacao_id
 
 
