@@ -19,11 +19,17 @@ from pytest_socket import disable_socket
 
 @pytest.fixture(autouse=True)
 def bloquear_rede():
-    """Desabilita qualquer chamada de socket durante o teste.
+    """Desabilita qualquer chamada de socket de rede durante o teste.
 
     Se um teste em tests/unit/ tentar abrir uma conexão de rede real
     (Postgres, Redis, HTTP, etc.), falha imediatamente com SocketBlockedError
     em vez de travar esperando timeout ou depender de um serviço externo
     estar disponível.
+
+    allow_unix_socket=True: ferramentas como o TestClient do FastAPI/Starlette
+    usam socket.socketpair() internamente para a ponte de thread do event
+    loop assíncrono — é IPC local (sem rede real), não infraestrutura
+    externa, então não deveria ser bloqueado pela regra do ADR 006. Sockets
+    de rede real (AF_INET/AF_INET6) continuam totalmente bloqueados.
     """
-    disable_socket()
+    disable_socket(allow_unix_socket=True)

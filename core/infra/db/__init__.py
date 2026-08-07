@@ -5,6 +5,7 @@ from core.infra.db.models import (  # noqa: F401
     LancamentoORM,
     PeriodoContabilORM,
     SplitORM,
+    UsuarioORM,
 )
 from core.infra.db.session import Base, SessionFactory, session_factory_from_env
 
@@ -18,4 +19,5 @@ __all__ = [
     "AuditEventoORM",
     "PeriodoContabilORM",
     "CentroCustoORM",
+    "UsuarioORM",
 ]

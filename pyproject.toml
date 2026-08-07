@@ -57,6 +57,16 @@ ai = [
     "httpx>=0.27.0",
 ]
 
+# Interface Web (ADR 008) — instalação opcional
+# core/ nunca requer este grupo; api/ → core/ apenas, nunca o inverso
+web = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.9",
+    "argon2-cffi>=23.1.0",
+]
+
 # Desenvolvimento e testes
 dev = [
     "pytest>=8.0.0",

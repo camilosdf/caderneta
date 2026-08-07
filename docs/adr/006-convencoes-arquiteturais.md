@@ -17,14 +17,14 @@ Este ADR torna explícitas as regras que o CI verifica automaticamente.
 PERMITIDO                          PROIBIDO
 ─────────────────────────────────────────────────────
 core/application → core/domain     core/* → ai/*
-core/application → core/ports      ai/* → core/domain (diretamente)
-core/application → core/events     core/domain → core/parsers
-core/application → core/infra      core/domain → core/rule_engine
-core/domain → (nada externo)       core/domain → core/infra
-core/rule_engine → core/domain     qualquer circular
-core/policies → core/domain
-core/policies → core/rule_engine
-core/parsers → core/domain
+core/application → core/ports      core/* → api/*      (ADR 008)
+core/application → core/events     ai/* → core/domain (diretamente)
+core/application → core/infra      ai/* → api/*         (ADR 008)
+core/domain → (nada externo)       api/* → ai/*         (ADR 008)
+core/rule_engine → core/domain     core/domain → core/parsers
+core/policies → core/domain        core/domain → core/rule_engine
+core/policies → core/rule_engine   core/domain → core/infra
+core/parsers → core/domain         qualquer circular
 core/audit → core/domain
 core/audit → core/events
 core/adapters → core/ports
@@ -34,7 +34,16 @@ core/cli → core/infra
 core/cli → core/application
 ai/* → core/ports (somente)
 ai/* → core/events (somente leitura)
+api/* → core/application           (ADR 008 — Interface Web)
+api/* → core/domain                (ADR 008)
+api/* → core/ports                 (ADR 008)
+api/* → core/infra                 (ADR 008)
+api/* → core/policies              (ADR 008)
 ```
+
+Verificado automaticamente por `infra/scripts/verificar_isolamento.py`
+(análise estática via AST) — cobre as três direções: `core/* → ai/*`,
+`core/* → api/*`, `api/* → ai/*`, `ai/* → api/*`.
 
 ## Convenções de nomenclatura
 
@@ -95,14 +104,31 @@ Eventos são imutáveis (`frozen=True`). Nunca alterar um evento publicado.
 
 ```bash
 # Executado em todo PR
-python infra/scripts/verificar_isolamento.py           # core não importa ai
+python infra/scripts/verificar_isolamento.py           # core/ai/api — três direções
 python infra/scripts/verificar_testes_hermeticos.py    # tests/unit/ sem infra externa
 pytest tests/unit/ -p no:cacheprovider                 # sockets bloqueados via pytest-socket
-pytest tests/unit/core/ --cov=core --cov-report=term-missing  # 397 testes, meta 75%+
+pytest tests/unit/core/ --cov=core --cov-report=term-missing  # 426 testes, meta 75%+
 ```
 
-**Isolamento Core/AI** — análise estática de imports (AST), impede `core/`
-de importar `ai/`.
+**Isolamento Core/AI/API** — análise estática de imports (AST). Desde a
+extensão para a Interface Web (ADR 008, W1), cobre três direções:
+`core/* → ai/*` proibido, `core/* → api/*` proibido, `api/* → ai/*`
+proibido, `ai/* → api/*` proibido.
+
+> **Achado corrigido durante o W1 (2026-08):** o cálculo de raiz do
+> repositório em `verificar_isolamento.py` usava
+> `Path(__file__).parent.parent`, que resolve para `infra/`, não a raiz do
+> projeto — então `core_dir = raiz / "core"` sempre apontou para um
+> caminho inexistente (`infra/core`). O script rodava "✅ verificado" sem
+> nunca escanear um único arquivo, desde sua criação. Corrigido para
+> `Path(__file__).resolve().parent.parent.parent`, testado com violações
+> reais induzidas deliberadamente para confirmar detecção. Ao rodar a
+> checagem corrigida contra o código real, nenhuma violação foi
+> encontrada — a disciplina manual de não importar `ai/` em `core/` se
+> manteve correta mesmo sem a rede de segurança automatizada funcionando.
+> `verificar_testes_hermeticos.py` recebeu o mesmo tratamento defensivo
+> (`.resolve()`) por consistência, embora sua profundidade de `.parent`
+> já estivesse correta por coincidência.
 
 **Hermeticidade de `tests/unit/`** — dois mecanismos independentes,
 implementados em 2026-08 junto com a reescrita da regra "sem banco" →
@@ -114,11 +140,18 @@ implementados em 2026-08 junto com a reescrita da regra "sem banco" →
    `boto3`) ou strings de conexão não-SQLite (`postgresql://`,
    `postgresql+psycopg`).
 2. **Runtime** (`pytest-socket`, via `tests/unit/conftest.py`): desabilita
-   toda chamada de socket durante a execução de `tests/unit/`. Como SQLite
-   é local (não usa sockets), a suíte inteira passa sem alterações — prova
-   automática de que já éramos herméticos antes desta formalização.
-   `tests/integration/` não tem essa restrição, pois depende de fato de
-   Docker Compose (Postgres, Redis).
+   toda chamada de socket de rede real durante a execução de `tests/unit/`.
+   Como SQLite é local (não usa sockets), a suíte inteira passa sem
+   alterações — prova automática de que já éramos herméticos antes desta
+   formalização. `tests/integration/` não tem essa restrição, pois depende
+   de fato de Docker Compose (Postgres, Redis).
+   > **Ajuste durante o W1:** `disable_socket()` sozinho também bloqueava
+   > `socket.socketpair()`, usado internamente pelo `TestClient` do
+   > FastAPI/Starlette para a ponte de thread do event loop assíncrono —
+   > IPC local, não infraestrutura externa. Ajustado para
+   > `disable_socket(allow_unix_socket=True)`, que mantém sockets de rede
+   > real (`AF_INET`/`AF_INET6`) bloqueados e libera apenas sockets Unix
+   > locais (`AF_UNIX`), confirmado por teste dedicado.
 
 > **Nota:** `verificar_convencoes.py` (nomenclatura/estrutura genérica) e
 > `pytest --timeout=2` eram citados na versão original deste ADR mas nunca

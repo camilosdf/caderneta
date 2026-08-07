@@ -3,6 +3,7 @@ from core.infra.repositories.centro_custo_repository import CentroCustoRepositor
 from core.infra.repositories.documento_repository import DocumentoRepository
 from core.infra.repositories.lancamento_repository import LancamentoRepository
 from core.infra.repositories.periodo_contabil_repository import PeriodoContabilRepository
+from core.infra.repositories.usuario_repository import UsuarioRepository
 
 __all__ = [
     "DocumentoRepository",
@@ -10,4 +11,5 @@ __all__ = [
     "AuditRepository",
     "PeriodoContabilRepository",
     "CentroCustoRepository",
+    "UsuarioRepository",
 ]

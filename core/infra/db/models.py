@@ -254,3 +254,26 @@ class CentroCustoORM(Base):
 
     def __repr__(self) -> str:
         return f"<CentroCustoORM {self.codigo} ativo={self.ativo}>"
+
+
+class UsuarioORM(Base):
+    """Persiste Usuario — identidade e papel para a Interface Web (ADR 008).
+
+    senha_hash nunca é exposta ao domínio — Usuario (core/domain/entities.py)
+    não carrega esse campo. Verificação de senha é responsabilidade de
+    api/auth/security.py, nunca de core/ (ver ADR 008, matriz de importação).
+    """
+
+    __tablename__ = "usuarios"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    nome: Mapped[str] = mapped_column(String(200), nullable=False)
+    papel: Mapped[str] = mapped_column(String(20), nullable=False, default="operador")
+    senha_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<UsuarioORM {self.email} papel={self.papel}>"

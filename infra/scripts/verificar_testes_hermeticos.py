@@ -89,7 +89,7 @@ def verificar_testes_hermeticos(raiz: Path) -> list[str]:
 
 
 if __name__ == "__main__":
-    raiz = Path(__file__).parent.parent.parent
+    raiz = Path(__file__).resolve().parent.parent.parent
     violacoes = verificar_testes_hermeticos(raiz)
 
     if violacoes:
