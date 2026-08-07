@@ -5,13 +5,16 @@ Subcomandos disponíveis:
   caderneta revisar <csv>               Exibe lançamentos para revisão
   caderneta importar <csv>              Registra importação no audit log
   caderneta dry-run <arquivo|pasta>     Simula sem gerar arquivos ou eventos
-  caderneta replay <arquivo_audit>      Reproduz eventos de um período
   caderneta verificar-integridade       Verifica hash chain do audit log
   caderneta status                      Exibe estado do sistema
 
 Princípio (ADR 001, E-10):
   A CLI é o primeiro frontend do sistema.
   A interface web (Etapa 6) melhora a experiência — não é pré-requisito.
+
+Persistência (A5):
+  A CLI usa SQLAlchemy/SQLite por padrão via --datalake (arquivo caderneta.db).
+  Defina DATABASE_URL para apontar a um PostgreSQL em produção.
 """
 
 from pathlib import Path
@@ -41,9 +44,20 @@ VERSAO_EXIBICAO = _VERSAO.exibicao  # ex: v0.003.001
 # HELPERS DE BOOTSTRAP
 # =============================================================
 
-def _audit_chain(pasta_datalake: Path):
-    from core.audit.chain import AuditChain
-    return AuditChain(pasta_datalake / "audit.jsonl")
+def _session_factory(pasta_datalake: Path):
+    """Retorna SessionFactory apontando para SQLite em pasta_datalake,
+    ou para DATABASE_URL se definida (produção/PostgreSQL)."""
+    import os
+    from core.infra.db.session import SessionFactory
+
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        pasta_datalake.mkdir(parents=True, exist_ok=True)
+        url = f"sqlite:///{pasta_datalake / 'caderneta.db'}"
+
+    factory = SessionFactory(url)
+    factory.criar_tabelas()
+    return factory
 
 
 def _event_bus():
@@ -54,13 +68,58 @@ def _event_bus():
 def _policy_engine():
     from decimal import Decimal
     from core.policies.engine import PolicyEngine
-    limite = Decimal(typer.get_app_dir("caderneta"))
     try:
         import os
         limite = Decimal(os.getenv("LIMITE_APROVACAO_SIMPLES", "5000.00"))
     except Exception:
         limite = Decimal("5000.00")
     return PolicyEngine(limite_aprovacao_simples=limite)
+
+
+def _classification_port():
+    """Carrega regras do arquivo JSON se disponível, senão lista vazia."""
+    import json
+    import uuid as _uuid
+    from core.domain.entities import CodigoConta
+    from core.rule_engine.classification_impl import RegrasDeterministicasPlugin
+    from core.rule_engine.rule_entity import RegraClassificacaoV2
+
+    regras_file = Path("dados/regras/regras_padrao.json")
+    regras = []
+    if regras_file.exists():
+        with open(regras_file, encoding="utf-8") as f:
+            dados = json.load(f)
+        for r in dados:
+            conta_d = CodigoConta(r["conta_debito"]) if r.get("conta_debito") else None
+            conta_c = CodigoConta(r["conta_credito"]) if r.get("conta_credito") else None
+            regras.append(RegraClassificacaoV2(
+                id=r.get("id", str(_uuid.uuid4())),
+                nome=r["nome"],
+                condicao=r["condicao_json"],
+                categoria=r.get("categoria"),
+                conta_debito=conta_d,
+                conta_credito=conta_c,
+                prioridade=r.get("prioridade", 100),
+            ))
+    return RegrasDeterministicasPlugin(regras=regras, fornecedores=[])
+
+
+def _construir_use_case(session_factory, pasta_saida: Path):
+    from core.adapters.csv_exporter import ExportadorCSV
+    from core.application.use_cases.processar_documento import ProcessarDocumentoUseCase
+    from core.parsers.detector import DetectorDocumento
+    from core.pipeline.parser_factory import ParserFactory
+
+    return ProcessarDocumentoUseCase(
+        detector=DetectorDocumento(),
+        parser_factory=ParserFactory(),
+        classification_port=_classification_port(),
+        policy_engine=_policy_engine(),
+        session_factory=session_factory,
+        event_bus=_event_bus(),
+        exporter=ExportadorCSV(),
+        pasta_saida=pasta_saida,
+    )
 
 
 # =============================================================
@@ -71,8 +130,9 @@ def _policy_engine():
 def processar(
     caminho: Annotated[Path, typer.Argument(help="Arquivo ou pasta a processar")],
     usuario: Annotated[str, typer.Option("--usuario", "-u", help="Identificação do operador")] = "operador",
+    empresa: Annotated[str, typer.Option("--empresa", help="Identificador da empresa")] = "local",
     saida: Annotated[Path, typer.Option("--saida", "-o", help="Pasta de saída do CSV")] = Path("./dados/saida"),
-    datalake: Annotated[Path, typer.Option("--datalake", help="Pasta do audit log")] = Path("./dados/datalake"),
+    datalake: Annotated[Path, typer.Option("--datalake", help="Pasta do banco de auditoria")] = Path("./dados/datalake"),
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ):
     """Processa documentos financeiros e gera CSV para importação no GnuCash."""
@@ -94,38 +154,32 @@ def processar(
         rprint("[yellow]Nenhum arquivo suportado encontrado.[/yellow]")
         raise typer.Exit(0)
 
-    audit = _audit_chain(datalake)
-    bus = _event_bus()
+    session_factory = _session_factory(datalake)
+    use_case = _construir_use_case(session_factory, saida)
 
     sucesso = falha = revisao = 0
 
     for arquivo in arquivos:
-        try:
-            resultado = _processar_arquivo(arquivo, usuario, saida, audit, bus)
-            if resultado["sucesso"]:
-                sucesso += 1
-                revisao += resultado.get("revisao", 0)
-                icon = "✅" if resultado.get("revisao", 0) == 0 else "⚠️ "
-                msg = (
-                    f"{icon} [green]{arquivo.name}[/green] — "
-                    f"{resultado['lancamentos']} lançamentos"
-                )
-                if resultado.get("revisao"):
-                    msg += f" ([yellow]{resultado['revisao']} para revisão[/yellow])"
-                if resultado.get("csv"):
-                    msg += f" → [cyan]{resultado['csv']}[/cyan]"
-                rprint(msg)
-                if verbose and resultado.get("avisos"):
-                    for a in resultado["avisos"]:
-                        rprint(f"   [yellow]⚠  {a}[/yellow]")
-            else:
-                falha += 1
-                rprint(f"[red]❌ {arquivo.name}[/red]")
-                for e in resultado.get("erros", []):
-                    rprint(f"   [red]• {e}[/red]")
-        except Exception as e:
+        resultado = _executar_para_arquivo(use_case, arquivo, usuario, empresa)
+        if resultado["sucesso"]:
+            sucesso += 1
+            revisao += resultado.get("revisao", 0)
+            icon = "✅" if resultado.get("revisao", 0) == 0 else "⚠️ "
+            msg = (
+                f"{icon} [green]{arquivo.name}[/green] — "
+                f"{resultado['lancamentos']} lançamentos"
+            )
+            if resultado.get("revisao"):
+                msg += f" ([yellow]{resultado['revisao']} para revisão[/yellow])"
+            rprint(msg)
+            if verbose and resultado.get("avisos"):
+                for a in resultado["avisos"]:
+                    rprint(f"   [yellow]⚠  {a}[/yellow]")
+        else:
             falha += 1
-            rprint(f"[red]❌ {arquivo.name}: {e}[/red]")
+            rprint(f"[red]❌ {arquivo.name}[/red]")
+            for e in resultado.get("erros", []):
+                rprint(f"   [red]• {e}[/red]")
 
     rprint(f"\n[bold]Resultado:[/bold] {sucesso} processados, {falha} com erro, {revisao} para revisão.")
 
@@ -215,6 +269,7 @@ def importar(
 
     import hashlib
     from core.audit.chain import TipoEvento
+    from core.infra.unit_of_work import UnitOfWork
 
     sha = hashlib.sha256()
     with open(caminho_csv, "rb") as f:
@@ -222,16 +277,18 @@ def importar(
             sha.update(chunk)
     hash_csv = sha.hexdigest()
 
-    audit = _audit_chain(datalake)
-    evento = audit.registrar(
-        tipo=TipoEvento.CSV_IMPORTADO,
-        payload={
-            "caminho_csv": str(caminho_csv),
-            "hash_csv": hash_csv,
-            "observacoes": obs,
-        },
-        usuario=aprovado_por,
-    )
+    session_factory = _session_factory(datalake)
+    with UnitOfWork(session_factory) as uow:
+        evento = uow.audit.registrar(
+            tipo=TipoEvento.CSV_IMPORTADO,
+            payload={
+                "caminho_csv": str(caminho_csv),
+                "hash_csv": hash_csv,
+                "observacoes": obs,
+            },
+            usuario=aprovado_por,
+        )
+        uow.commit()
 
     rprint(Panel(
         f"[bold green]✅ Importação registrada[/bold green]\n\n"
@@ -253,8 +310,9 @@ def importar(
 def dry_run(
     caminho: Annotated[Path, typer.Argument(help="Arquivo ou pasta para simular")],
     usuario: Annotated[str, typer.Option("--usuario", "-u")] = "simulacao",
+    empresa: Annotated[str, typer.Option("--empresa")] = "simulacao",
 ):
-    """Simula o processamento sem gerar arquivos nem registrar eventos.
+    """Simula o processamento sem afetar o banco de dados de produção.
 
     Use antes de alterar regras de classificação para ver o impacto.
     Ex: caderneta dry-run ./documentos/janeiro/
@@ -263,9 +321,8 @@ def dry_run(
         rprint(f"[red]Erro: caminho não encontrado: {caminho}[/red]")
         raise typer.Exit(1)
 
-    from core.audit.chain import AuditChain
-    from core.events.catalog import EventBusEmMemoria
-    import tempfile, os
+    import tempfile
+    from core.infra.db.session import SessionFactory
 
     rprint(Panel(
         f"[bold yellow]DRY RUN[/bold yellow] — nenhum arquivo será gerado\n"
@@ -284,31 +341,30 @@ def dry_run(
     total_l = total_r = 0
 
     with tempfile.TemporaryDirectory() as tmp:
-        audit_tmp = AuditChain(Path(tmp) / "dry_run_audit.jsonl")
+        # Banco isolado e descartável — nenhum efeito persistente
+        session_factory = SessionFactory(f"sqlite:///{tmp}/dry_run.db")
+        session_factory.criar_tabelas()
         saida_tmp = Path(tmp) / "saida"
-        bus = EventBusEmMemoria()
+        use_case = _construir_use_case(session_factory, saida_tmp)
 
         for arquivo in arquivos:
-            try:
-                r = _processar_arquivo(arquivo, usuario, saida_tmp, audit_tmp, bus)
-                l = r.get("lancamentos", 0)
-                rv = r.get("revisao", 0)
-                total_l += l
-                total_r += rv
-                status = "[green]OK[/green]" if r["sucesso"] else "[red]ERRO[/red]"
-                tabela.add_row(arquivo.name, str(l), str(rv) if rv else "—", status)
-                if not r["sucesso"]:
-                    for e in r.get("erros", []):
-                        tabela.add_row("", "", "", f"[red dim]{e}[/red dim]")
-            except Exception as e:
-                tabela.add_row(arquivo.name, "—", "—", f"[red]ERRO: {e}[/red]")
+            r = _executar_para_arquivo(use_case, arquivo, usuario, empresa)
+            l = r.get("lancamentos", 0)
+            rv = r.get("revisao", 0)
+            total_l += l
+            total_r += rv
+            status_txt = "[green]OK[/green]" if r["sucesso"] else "[red]ERRO[/red]"
+            tabela.add_row(arquivo.name, str(l), str(rv) if rv else "—", status_txt)
+            if not r["sucesso"]:
+                for e in r.get("erros", []):
+                    tabela.add_row("", "", "", f"[red dim]{e}[/red dim]")
 
     console.print(tabela)
     rprint(
         f"\n[bold]Simulação:[/bold] {len(arquivos)} arquivos | "
         f"{total_l} lançamentos | {total_r} para revisão"
     )
-    rprint("[dim]Nenhum arquivo gerado. Nenhum evento registrado.[/dim]")
+    rprint("[dim]Nenhum arquivo gerado. Nenhum evento persistido.[/dim]")
 
 
 # =============================================================
@@ -320,9 +376,11 @@ def verificar_integridade(
     datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
 ):
     """Verifica a integridade da hash chain do audit log."""
+    from core.infra.unit_of_work import UnitOfWork
 
-    audit = _audit_chain(datalake)
-    integra, erros = audit.verificar_integridade()
+    session_factory = _session_factory(datalake)
+    with UnitOfWork(session_factory) as uow:
+        integra, erros = uow.audit.verificar_integridade()
 
     if integra:
         rprint(Panel(
@@ -350,7 +408,7 @@ def status(
     datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
 ):
     """Exibe o estado do sistema e estatísticas do audit log."""
-    import json
+    from core.infra.unit_of_work import UnitOfWork
 
     from core.versao import VERSAO as _v
     cor_status = "green" if _v.e_producao else "yellow"
@@ -362,21 +420,18 @@ def status(
         title="Status",
     ))
 
-    arquivo_log = datalake / "audit.jsonl"
-
-    if not arquivo_log.exists():
+    banco = datalake / "caderneta.db"
+    if not banco.exists():
         rprint("[dim]Nenhum evento registrado ainda. Execute 'caderneta processar' para começar.[/dim]")
         return
 
-    contadores: dict[str, int] = {}
-    with open(arquivo_log, encoding="utf-8") as f:
-        for linha in f:
-            try:
-                ev = json.loads(linha)
-                t = ev.get("tipo", "DESCONHECIDO")
-                contadores[t] = contadores.get(t, 0) + 1
-            except json.JSONDecodeError:
-                continue
+    session_factory = _session_factory(datalake)
+    with UnitOfWork(session_factory) as uow:
+        contadores = uow.audit.contar_por_tipo()
+
+    if not contadores:
+        rprint("[dim]Nenhum evento registrado ainda. Execute 'caderneta processar' para começar.[/dim]")
+        return
 
     tabela = Table(title="Eventos no Audit Log", show_header=True, header_style="bold")
     tabela.add_column("Tipo de Evento")
@@ -403,151 +458,23 @@ def _listar_arquivos(caminho: Path) -> list[Path]:
     return sorted(f for f in caminho.iterdir() if f.suffix.lower() in extensoes)
 
 
-def _processar_arquivo(arquivo: Path, usuario: str, saida: Path, audit, bus) -> dict:
-    """
-    Tenta processar um arquivo com os parsers disponíveis.
-    Retorna dict com resultado padronizado.
-    """
-    from core.parsers.detector import DetectorDocumento, TipoNaoSuportadoError
-    from core.parsers.ofx import OFXParser
-    from core.parsers.csv import parsear_csv
-    from core.rule_engine.classification_impl import RegrasDeterministicasPlugin
-    from core.adapters.csv_exporter import ExportadorCSV
-    from core.domain.entities import TipoDocumento
-    import json
+def _executar_para_arquivo(use_case, arquivo: Path, usuario: str, empresa: str) -> dict:
+    """Adapta ProcessarDocumentoUseCase.executar() ao formato de dict usado pela CLI."""
+    from core.application.use_cases.processar_documento import ComandoProcessarDocumento
 
-    resultado = {"sucesso": False, "lancamentos": 0, "revisao": 0, "erros": [], "avisos": []}
+    resultado = use_case.executar(ComandoProcessarDocumento(
+        filepath=arquivo,
+        usuario=usuario,
+        empresa_id=empresa,
+    ))
 
-    try:
-        detector = DetectorDocumento()
-        hash_doc = detector.calcular_hash(arquivo)
-
-        duplicata = audit.buscar_por_hash_documento(hash_doc)
-        if duplicata:
-            resultado["erros"].append(f"Duplicata: já processado em {duplicata.get('timestamp', '?')}")
-            return resultado
-
-        tipo = detector.detectar(arquivo)
-
-        if tipo == TipoDocumento.OFX_STATEMENT:
-            documentos = list(OFXParser().parsear(arquivo))
-        elif tipo == TipoDocumento.CSV_STATEMENT:
-            documentos = list(parsear_csv(arquivo))
-        else:
-            resultado["erros"].append(f"Tipo {tipo.value} ainda não suportado nos parsers determinísticos.")
-            return resultado
-
-        if not documentos:
-            resultado["erros"].append("Nenhuma transação encontrada.")
-            return resultado
-
-        # Carrega regras do arquivo JSON se disponível
-        regras_file = Path("dados/regras/regras_padrao.json")
-        if regras_file.exists():
-            from core.rule_engine.rule_entity import RegraClassificacaoV2
-            from core.domain.entities import CodigoConta
-            import uuid as _uuid
-            with open(regras_file, encoding="utf-8") as f:
-                dados = json.load(f)
-            regras = []
-            for r in dados:
-                conta_d = CodigoConta(r["conta_debito"]) if r.get("conta_debito") else None
-                conta_c = CodigoConta(r["conta_credito"]) if r.get("conta_credito") else None
-                from core.rule_engine.rule_entity import RegraClassificacaoV2
-                from core.domain.entities import CodigoConta as CC
-                regras.append(RegraClassificacaoV2(
-                    id=r.get("id", str(_uuid.uuid4())),
-                    nome=r["nome"],
-                    condicao=r["condicao_json"],
-                    categoria=r.get("categoria"),
-                    conta_debito=conta_d,
-                    conta_credito=conta_c,
-                    prioridade=r.get("prioridade", 100),
-                ))
-        else:
-            regras = []
-
-        classificador = RegrasDeterministicasPlugin(regras=regras, fornecedores=[])
-        exportador = ExportadorCSV()
-
-        lancamentos = []
-        for doc in documentos:
-            norm = classificador.normalizar_fornecedor(doc.nome_emitente or "")
-            sugestao = classificador.sugerir_categoria(doc, None)
-
-            from core.domain.entities import (
-                Lancamento, Split, NaturezaLancamento,
-                StatusLancamento, NivelAprovacao
-            )
-
-            splits = []
-            if sugestao.conta_debito and sugestao.conta_credito and doc.valor_liquido:
-                splits = [
-                    Split(conta=sugestao.conta_debito,
-                          natureza=NaturezaLancamento.DEBITO,
-                          valor=doc.valor_liquido),
-                    Split(conta=sugestao.conta_credito,
-                          natureza=NaturezaLancamento.CREDITO,
-                          valor=doc.valor_liquido),
-                ]
-
-            l = Lancamento(
-                data_lancamento=doc.data_emissao,
-                descricao=doc.nome_emitente or "SEM DESCRIÇÃO",
-                splits=splits,
-                categoria=sugestao.categoria,
-                confidence=sugestao.confidence,
-                metodo_classificacao=sugestao.metodo,
-                status=StatusLancamento.PENDENTE,
-                nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
-                pre_aprovado=sugestao.confidence >= 0.99,
-            )
-            if splits:
-                try:
-                    l.validar()
-                    lancamentos.append(l)
-                except ValueError as e:
-                    resultado["avisos"].append(str(e))
-                    continue
-
-            if norm.precisa_revisao:
-                resultado["avisos"].append(f"Fornecedor não reconhecido: '{doc.nome_emitente}'")
-
-        if not lancamentos:
-            resultado["erros"].append("Nenhum lançamento válido gerado.")
-            return resultado
-
-        exportacao = exportador.exportar(lancamentos, saida, prefixo=arquivo.stem)
-
-        from core.audit.chain import TipoEvento
-        audit.registrar(
-            tipo=TipoEvento.DOCUMENTO_PROCESSADO,
-            payload={"nome_arquivo": arquivo.name, "lancamentos": len(lancamentos)},
-            documento_hash=hash_doc,
-            usuario=usuario,
-        )
-
-        resultado["sucesso"] = True
-        resultado["lancamentos"] = len(lancamentos)
-        resultado["revisao"] = sum(1 for l in lancamentos if l.precisa_revisao)
-        resultado["csv"] = exportacao.caminho.name
-        resultado["hash_csv"] = exportacao.hash_sha256
-
-    except TipoNaoSuportadoError as e:
-        resultado["erros"].append(str(e))
-    except Exception as e:
-        resultado["erros"].append(str(e))
-
-    return resultado
-
-
-# Atalhos para imports internos que a CLI usa
-# (evita importar diretamente — centraliza aqui)
-try:
-    from core.parsers.detector import DetectorDocumento, TipoNaoSuportadoError  # type: ignore
-except ImportError:
-    # Durante instalação podem não estar disponíveis ainda
-    pass
+    return {
+        "sucesso": resultado.sucesso,
+        "lancamentos": resultado.lancamentos_criados,
+        "revisao": resultado.lancamentos_revisao,
+        "erros": resultado.erros,
+        "avisos": resultado.avisos,
+    }
 
 
 if __name__ == "__main__":

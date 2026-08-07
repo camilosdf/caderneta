@@ -142,6 +142,17 @@ class AuditRepository:
 
         return len(erros) == 0, erros
 
+    def contar_por_tipo(self, empresa_id: Optional[str] = None) -> dict[str, int]:
+        """Conta eventos agrupados por tipo — usado pelo comando `status` da CLI."""
+        from sqlalchemy import func
+
+        stmt = select(AuditEventoORM.tipo, func.count(AuditEventoORM.id))
+        if empresa_id:
+            stmt = stmt.where(AuditEventoORM.empresa_id == empresa_id)
+        stmt = stmt.group_by(AuditEventoORM.tipo)
+
+        return {tipo: qtd for tipo, qtd in self._session.execute(stmt).all()}
+
     # ── Internals ────────────────────────────────────────────────────────
 
     def _carregar_ultimo_hash(self) -> str:
