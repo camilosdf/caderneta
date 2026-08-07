@@ -39,11 +39,25 @@ api/* → core/domain                (ADR 008)
 api/* → core/ports                 (ADR 008)
 api/* → core/infra                 (ADR 008)
 api/* → core/policies              (ADR 008)
+api/* → core/audit                 (ADR 008/W2 — TipoEvento é vocabulário
+                                     de domínio, não detalhe interno; mesmo
+                                     precedente de core/infra → core/audit)
 ```
 
 Verificado automaticamente por `infra/scripts/verificar_isolamento.py`
 (análise estática via AST) — cobre as três direções: `core/* → ai/*`,
 `core/* → api/*`, `api/* → ai/*`, `ai/* → api/*`.
+
+> **Nota sobre `core/audit`:** apesar do nome sugerir infraestrutura,
+> `core/audit/chain.py` é considerado um **módulo de domínio compartilhado**
+> — define o catálogo de tipos de evento (`TipoEvento`) e a estrutura do
+> evento imutável (`EventoAuditoria`), vocabulário que tanto `core/infra`
+> (persistência) quanto `api/` (geração de eventos de login/logout)
+> precisam conhecer. Não é "infraestrutura de auditoria" no sentido de
+> implementação de persistência — isso é `core/infra/repositories/
+> audit_repository.py`, que sim é infraestrutura. Essa distinção evita
+> interpretações divergentes no futuro sobre o que mais poderia
+> justificar um import direto de `core/audit`.
 
 ## Convenções de nomenclatura
 

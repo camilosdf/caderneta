@@ -36,6 +36,8 @@ class TipoEvento(str, Enum):
     CSV_IMPORTADO            = "CSV_IMPORTADO"
     EXPORTACAO_GNUCASH       = "EXPORTACAO_GNUCASH"
     ERRO_SISTEMA             = "ERRO_SISTEMA"
+    USUARIO_LOGIN            = "USUARIO_LOGIN"
+    USUARIO_LOGOUT           = "USUARIO_LOGOUT"
 
 
 @dataclass

@@ -13,8 +13,17 @@ tests/integration/ não importa este conftest — mantém acesso a rede livre,
 pois depende de fato de Docker Compose (Postgres, Redis).
 """
 
+import os
+
 import pytest
 from pytest_socket import disable_socket
+
+# Garante que api/main.py consegue ser importado durante a coleta de testes,
+# mesmo antes de qualquer fixture rodar — create_app() é chamado no nível
+# do módulo (app = create_app()) e exige CADERNETA_SECRET_KEY fora de
+# ambiente dev (ADR 008 §6). setdefault() nunca sobrescreve um valor real
+# se o ambiente de CI/produção já tiver definido o seu próprio.
+os.environ.setdefault("CADERNETA_SECRET_KEY", "chave-de-teste-nao-usar-em-producao")
 
 
 @pytest.fixture(autouse=True)

@@ -80,6 +80,39 @@ class UsuarioRepository:
         stmt = stmt.order_by(UsuarioORM.nome)
         return [_para_dominio(orm) for orm in self._session.execute(stmt).scalars()]
 
+    # ── Sessão ativa (achado de segurança do W2) ────────────────────────
+    # O cookie assinado é só um portador de identidade — a revogação real
+    # depende deste estado no servidor. Ver docstring de UsuarioORM.
+
+    def definir_sessao_ativa(self, usuario_id: UUID, authentication_id: str) -> None:
+        """Grava o authentication_id da sessão recém-criada no login.
+
+        Sobrescreve qualquer sessão anterior — MVP permite no máximo uma
+        sessão ativa por usuário (login em outro lugar revoga a anterior).
+        """
+        orm = self._session.get(UsuarioORM, str(usuario_id))
+        if orm is None:
+            raise ValueError(f"Usuário {usuario_id} não encontrado.")
+        orm.current_authentication_id = authentication_id
+
+    def sessao_ativa_confere(self, usuario_id: UUID, authentication_id: str) -> bool:
+        """True somente se o authentication_id do cookie bate com o
+        registrado no servidor para este usuário. Usado em toda requisição
+        autenticada — nunca confia apenas na assinatura do cookie."""
+        stmt = select(UsuarioORM.current_authentication_id).where(
+            UsuarioORM.id == str(usuario_id)
+        )
+        atual = self._session.execute(stmt).scalar_one_or_none()
+        return atual is not None and atual == authentication_id
+
+    def invalidar_sessao_ativa(self, usuario_id: UUID) -> None:
+        """Zera a sessão ativa — chamado no logout. Qualquer cópia do
+        cookie antigo, mesmo com assinatura válida, deixa de autenticar
+        imediatamente após esta chamada."""
+        orm = self._session.get(UsuarioORM, str(usuario_id))
+        if orm is not None:
+            orm.current_authentication_id = None
+
 
 # =============================================================
 # MAPEAMENTO DOMÍNIO ↔ ORM

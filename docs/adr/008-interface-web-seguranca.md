@@ -176,6 +176,45 @@ decisão de implementação do W1, não deste ADR.
     não bloqueante — documentar explicitamente na implementação se essa
     rota for escolhida.
 
+**Decisão implementada no W2:** cookie de sessão assinado via Starlette
+`SessionMiddleware`, `same_site=strict`, `https_only` fora de dev
+(`HttpOnly`/`Secure`/`SameSite=Strict` confirmados empiricamente via
+inspeção do header `Set-Cookie` em ambos os cenários, testes automatizados
+em `tests/unit/api/test_auth.py::TestAtributosSegurancaCookie`).
+
+> **Achado de segurança corrigido durante o W2 (2026-08):** a implementação
+> inicial presumiu que "sessão com estado no servidor" descrevia
+> corretamente o cookie assinado do Starlette — o que é **falso**.
+> `SessionMiddleware` é inteiramente client-side: toda a sessão vive dentro
+> do cookie assinado, sem nenhuma tabela no banco. Um teste dedicado
+> comprovou que um cookie capturado antes do logout continuava
+> autenticando depois do logout — exatamente o mesmo problema que este
+> ADR já havia identificado como débito técnico *apenas* para o cenário
+> JWT stateless, mas que na prática também afetava a implementação de
+> cookie escolhida.
+>
+> **Correção:** o cookie assinado passou a carregar somente um
+> `authentication_id` (portador de identidade, não a autorização em si).
+> `UsuarioORM.current_authentication_id` guarda, no servidor, qual
+> `authentication_id` está ativo para cada usuário. Toda requisição
+> autenticada compara os dois valores (`UsuarioRepository.
+> sessao_ativa_confere()`) — não basta a assinatura do cookie ser válida.
+> Login sobrescreve o valor no servidor; logout zera. Um cookie replay
+> após logout agora falha com 401, comprovado por teste dedicado
+> (`test_sessao_apos_logout_nao_aceita_cookie_antigo`).
+>
+> **Consequência assumida deliberadamente para o MVP:** no máximo uma
+> sessão autenticada por usuário. Um novo login sobrescreve
+> `current_authentication_id`, revogando automaticamente qualquer sessão
+> anterior do mesmo usuário — mesmo sem logout explícito (comprovado por
+> `test_novo_login_revoga_sessao_anterior`). Login em outro dispositivo
+> desloga o anterior; isso é aceitável e até desejável para o MVP
+> (simplicidade, sem tabela de sessões), mas é uma restrição real de UX
+> que a equipe deve estar ciente. Se múltiplas sessões simultâneas forem
+> necessárias no futuro, substituir `current_authentication_id` por uma
+> tabela `sessoes` (`id`, `usuario_id`, `authentication_id`, `created_at`,
+> `expires_at`, `revogada`) — a interface pública da API não muda.
+
 ### 7. Integração obrigatória com o Audit Log
 
 Toda mutação relevante grava evento via `AuditRepository`, dentro da mesma

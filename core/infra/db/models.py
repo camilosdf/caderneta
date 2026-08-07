@@ -262,6 +262,22 @@ class UsuarioORM(Base):
     senha_hash nunca é exposta ao domínio — Usuario (core/domain/entities.py)
     não carrega esse campo. Verificação de senha é responsabilidade de
     api/auth/security.py, nunca de core/ (ver ADR 008, matriz de importação).
+
+    current_authentication_id: referência à sessão ativa no servidor —
+    o cookie assinado carrega apenas um authentication_id (portador de
+    identidade), nunca a autorização em si. A cada requisição autenticada,
+    o valor do cookie é comparado contra este campo; logout zera o campo,
+    invalidando imediatamente qualquer cópia antiga do cookie que ainda
+    tenha assinatura válida (achado de segurança do W2 — Starlette
+    SessionMiddleware sozinho é inteiramente client-side, sem isso o
+    logout não revoga cópias do cookie capturadas antes dele).
+
+    MVP: no máximo uma sessão autenticada por usuário — um novo login
+    sobrescreve este campo, invalidando qualquer sessão anterior. Se
+    múltiplas sessões simultâneas forem necessárias no futuro, substituir
+    por uma tabela `sessoes` (id, usuario_id, authentication_id,
+    created_at, expires_at, revogada) sem alterar a interface pública
+    da API.
     """
 
     __tablename__ = "usuarios"
@@ -274,6 +290,7 @@ class UsuarioORM(Base):
     senha_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    current_authentication_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     def __repr__(self) -> str:
         return f"<UsuarioORM {self.email} papel={self.papel}>"
