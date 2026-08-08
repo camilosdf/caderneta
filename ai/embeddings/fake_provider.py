@@ -16,7 +16,6 @@ correto para validar contratos e fluxo de dados.
 
 import hashlib
 import math
-from typing import Optional
 
 
 class FakeEmbeddingProvider:

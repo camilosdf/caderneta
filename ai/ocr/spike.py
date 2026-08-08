@@ -21,7 +21,6 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -32,7 +31,7 @@ class ResultadoOCR:
     tempo_ms: float
     confiança_media: float
     linhas: list[dict]
-    erro: Optional[str] = None
+    erro: str | None = None
 
 
 @dataclass
@@ -82,11 +81,11 @@ class SpikeOCR:
                 use_gpu=False,          # CPU mode — sem dependência de GPU
                 show_log=False,
             )
-        except ImportError:
+        except ImportError as err:
             raise RuntimeError(
                 "PaddleOCR não instalado. Execute: pip install paddleocr paddlepaddle\n"
                 "Esta dependência é opcional e pertence ao módulo ai/, não ao core/."
-            )
+            ) from err
 
     def processar_documento(self, filepath: Path) -> ResultadoOCR:
         self._inicializar()
@@ -106,7 +105,7 @@ class SpikeOCR:
                 })
                 confiancas.append(confiança)
 
-            texto_completo = "\n".join(l["texto"] for l in linhas)
+            texto_completo = "\n".join(linha_ocr["texto"] for linha_ocr in linhas)
             confiança_media = sum(confiancas) / len(confiancas) if confiancas else 0.0
 
             return ResultadoOCR(

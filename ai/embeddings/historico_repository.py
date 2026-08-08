@@ -11,7 +11,6 @@ Localização: ai/ porque depende de ai.embeddings (CandidatoHistorico).
   A direção é ai/ → core/infra (permitida) — não o inverso.
 """
 
-from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
@@ -38,7 +37,7 @@ class HistoricoRepository:
         self,
         empresa_id: UUID,
         limit: int = 500,
-        min_valor: Optional[float] = None,
+        min_valor: float | None = None,
     ) -> list[CandidatoHistorico]:
         """Retorna candidatos a partir de lançamentos aprovados da empresa.
 

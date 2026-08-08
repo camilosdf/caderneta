@@ -18,9 +18,7 @@ Isso preserva o princípio de responsabilidade única e evita que uma
 decisão de precedência fique escondida dentro de um plugin de IA.
 """
 
-import math
 from dataclasses import dataclass, field
-from typing import Optional
 
 from core.domain.entities import CodigoConta, Documento, Fornecedor
 from core.ports.classification import ResultadoNormalizacao, Sugestao
@@ -34,7 +32,7 @@ class CandidatoHistorico:
     categoria: str
     conta_debito: str
     conta_credito: str
-    centro_custo: Optional[str] = None
+    centro_custo: str | None = None
     embedding: list[float] = field(default_factory=list)
 
 
@@ -49,7 +47,7 @@ class EmbeddingsPlugin:
     def __init__(
         self,
         provider: EmbeddingProvider,
-        candidatos: Optional[list[CandidatoHistorico]] = None,
+        candidatos: list[CandidatoHistorico] | None = None,
         threshold_classificar: float = 0.85,
         threshold_revisao: float = 0.70,
         conta_fallback_debito: str = "4.1.01.099",
@@ -79,7 +77,7 @@ class EmbeddingsPlugin:
     def sugerir_categoria(
         self,
         documento: Documento,
-        fornecedor: Optional[Fornecedor],
+        fornecedor: Fornecedor | None,
     ) -> Sugestao:
         """Sugere categoria via similaridade semântica no histórico.
 
@@ -174,20 +172,20 @@ class EmbeddingsPlugin:
         candidatos = []
         textos = []
 
-        for l in lancamentos:
-            descricao = l.get("descricao", "")
+        for lanc in lancamentos:
+            descricao = lanc.get("descricao", "")
             textos.append(descricao)
             candidatos.append(CandidatoHistorico(
                 descricao=descricao,
-                categoria=l.get("categoria", ""),
-                conta_debito=l.get("conta_debito", "4.1.01.099"),
-                conta_credito=l.get("conta_credito", "1.1.01.002"),
-                centro_custo=l.get("centro_custo"),
+                categoria=lanc.get("categoria", ""),
+                conta_debito=lanc.get("conta_debito", "4.1.01.099"),
+                conta_credito=lanc.get("conta_credito", "1.1.01.002"),
+                centro_custo=lanc.get("centro_custo"),
             ))
 
         if textos:
             embeddings = provider.encode_batch(textos)
-            for candidato, emb in zip(candidatos, embeddings):
+            for candidato, emb in zip(candidatos, embeddings, strict=False):
                 candidato.embedding = emb
 
         return cls(provider=provider, candidatos=candidatos, **kwargs)
@@ -197,10 +195,10 @@ class EmbeddingsPlugin:
     def _buscar_melhor(
         self,
         vetor_consulta: list[float],
-    ) -> tuple[float, Optional[CandidatoHistorico]]:
+    ) -> tuple[float, CandidatoHistorico | None]:
         """Retorna (similaridade, candidato) do resultado mais similar."""
         melhor_sim = -1.0
-        melhor: Optional[CandidatoHistorico] = None
+        melhor: CandidatoHistorico | None = None
 
         for candidato in self._candidatos:
             if not candidato.embedding:
@@ -242,7 +240,7 @@ def _texto_documento(documento: Documento) -> str:
 
 def _produto_interno(a: list[float], b: list[float]) -> float:
     """Produto interno de dois vetores (similaridade do cosseno se normalizados)."""
-    return sum(x * y for x, y in zip(a, b))
+    return sum(x * y for x, y in zip(a, b, strict=False))
 
 
 def _sim_para_confidence(sim: float) -> float:

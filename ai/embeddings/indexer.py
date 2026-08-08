@@ -13,7 +13,6 @@ O índice vive em memória (MVP). pgvector para persistência de embeddings
 """
 
 import logging
-from typing import Optional
 from uuid import UUID
 
 from ai.embeddings.embeddings_plugin import EmbeddingsPlugin
@@ -52,7 +51,7 @@ class EmbeddingsIndexer:
         self._limit = limit
         self._threshold_classificar = threshold_classificar
         self._threshold_revisao = threshold_revisao
-        self._plugin: Optional[EmbeddingsPlugin] = None
+        self._plugin: EmbeddingsPlugin | None = None
 
     def construir(self) -> EmbeddingsPlugin:
         """Constrói ou reconstrói o índice a partir do histórico atual.
@@ -89,7 +88,7 @@ class EmbeddingsIndexer:
         # Calcular embeddings em batch (mais eficiente que um a um)
         textos = [c.descricao for c in candidatos]
         embeddings = self._provider.encode_batch(textos)
-        for candidato, emb in zip(candidatos, embeddings):
+        for candidato, emb in zip(candidatos, embeddings, strict=False):
             candidato.embedding = emb
 
         self._plugin = EmbeddingsPlugin(
@@ -107,7 +106,7 @@ class EmbeddingsIndexer:
         return self.construir()
 
     @property
-    def plugin(self) -> Optional[EmbeddingsPlugin]:
+    def plugin(self) -> EmbeddingsPlugin | None:
         """Plugin atual, ou None se construir() ainda não foi chamado."""
         return self._plugin
 

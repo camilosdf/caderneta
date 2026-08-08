@@ -25,8 +25,6 @@ Configuração: CADERNETA_AI_MODELO_EMBEDDING controla qual modelo usar.
 """
 
 import os
-from typing import Optional
-
 
 MODELO_PADRAO = "paraphrase-multilingual-MiniLM-L12-v2"
 MODELO_PRODUCAO = "rufimelo/bert-large-portuguese-cased-sts"
@@ -42,7 +40,7 @@ class SentenceTransformerProvider:
 
     def __init__(
         self,
-        modelo: Optional[str] = None,
+        modelo: str | None = None,
         device: str = "cpu",
         _modelo_instancia=None,  # injeção direta para testes — não usar em produção
     ) -> None:
@@ -105,13 +103,13 @@ class SentenceTransformerProvider:
 
         try:
             from sentence_transformers import SentenceTransformer
-        except ImportError:
+        except ImportError as err:
             raise RuntimeError(
                 "sentence-transformers não instalado. "
                 "Para usar SentenceTransformerProvider, instale o grupo 'ai': "
                 "pip install caderneta[ai]\n"
                 "Este provider pertence a ai/, nunca é importado pelo core/."
-            )
+            ) from err
 
         self._modelo = SentenceTransformer(
             self._modelo_nome,

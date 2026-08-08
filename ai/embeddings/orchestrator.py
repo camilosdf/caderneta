@@ -12,7 +12,6 @@ Também satisfaz ClassificationPort via duck typing — pode ser injetado
 em qualquer lugar que aceite um ClassificationPort.
 """
 
-from typing import Optional
 
 from core.domain.entities import Documento, Fornecedor
 from core.ports.classification import (
@@ -35,7 +34,7 @@ class ClassifierOrchestrator:
     def __init__(
         self,
         regras: ClassificationPort,
-        embeddings: Optional[ClassificationPort] = None,
+        embeddings: ClassificationPort | None = None,
         threshold_aceitar_embedding: float = 0.70,
     ) -> None:
         """
@@ -61,7 +60,7 @@ class ClassifierOrchestrator:
     def sugerir_categoria(
         self,
         documento: Documento,
-        fornecedor: Optional[Fornecedor],
+        fornecedor: Fornecedor | None,
     ) -> Sugestao:
         """Aplica regras primeiro; se não cobriu, tenta embeddings."""
         sugestao_regra = self._regras.sugerir_categoria(documento, fornecedor)
