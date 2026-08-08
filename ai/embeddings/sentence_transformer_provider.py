@@ -44,6 +44,7 @@ class SentenceTransformerProvider:
         self,
         modelo: Optional[str] = None,
         device: str = "cpu",
+        _modelo_instancia=None,  # injeção direta para testes — não usar em produção
     ) -> None:
         """
         Args:
@@ -51,13 +52,15 @@ class SentenceTransformerProvider:
                     CADERNETA_AI_MODELO_EMBEDDING, com fallback para
                     paraphrase-multilingual-MiniLM-L12-v2.
             device: "cpu" (padrão), "cuda", ou "mps" (Apple Silicon).
+            _modelo_instancia: instância já carregada (mock em testes).
+                    Prefixo _ sinaliza que não é API pública.
         """
         self._modelo_nome = (
             modelo
             or os.getenv("CADERNETA_AI_MODELO_EMBEDDING", MODELO_PADRAO)
         )
         self._device = device
-        self._modelo = None  # carregado na primeira chamada
+        self._modelo = _modelo_instancia  # None em produção, mock em testes
 
     @property
     def dimensao(self) -> int:
