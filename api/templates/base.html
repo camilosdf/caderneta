@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Caderneta{% endblock %}</title>
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    :root {
+      --cor-fundo: #f8f9fa;
+      --cor-superficie: #ffffff;
+      --cor-borda: #dee2e6;
+      --cor-texto: #212529;
+      --cor-texto-suave: #6c757d;
+      --cor-primaria: #0d6efd;
+      --cor-primaria-hover: #0b5ed7;
+      --cor-sucesso: #198754;
+      --cor-perigo: #dc3545;
+      --cor-aviso: #ffc107;
+      --cor-aviso-texto: #664d03;
+      --raio: 6px;
+      --sombra: 0 1px 3px rgba(0,0,0,.08);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 0.9375rem;
+      background: var(--cor-fundo);
+      color: var(--cor-texto);
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--cor-superficie);
+      border-bottom: 1px solid var(--cor-borda);
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--sombra);
+    }
+
+    header .marca {
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--cor-primaria);
+      text-decoration: none;
+    }
+
+    header nav {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    header nav span {
+      color: var(--cor-texto-suave);
+      font-size: 0.875rem;
+    }
+
+    header nav a, header nav button {
+      font-size: 0.875rem;
+      color: var(--cor-primaria);
+      text-decoration: none;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    header nav button:hover, header nav a:hover {
+      text-decoration: underline;
+    }
+
+    main {
+      max-width: 960px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+    }
+
+    h1 { font-size: 1.4rem; margin-bottom: 1.25rem; }
+    h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+
+    .card {
+      background: var(--cor-superficie);
+      border: 1px solid var(--cor-borda);
+      border-radius: var(--raio);
+      padding: 1.5rem;
+      box-shadow: var(--sombra);
+      margin-bottom: 1.25rem;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 0.4rem 1rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      border-radius: var(--raio);
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+
+    .btn-primario  { background: var(--cor-primaria);  color: #fff; }
+    .btn-primario:hover { background: var(--cor-primaria-hover); }
+    .btn-sucesso   { background: var(--cor-sucesso);   color: #fff; }
+    .btn-sucesso:hover  { background: #157347; }
+    .btn-perigo    { background: var(--cor-perigo);    color: #fff; }
+    .btn-perigo:hover   { background: #b02a37; }
+    .btn-secundario { background: var(--cor-borda); color: var(--cor-texto); }
+    .btn-secundario:hover { background: #c8cdd2; }
+
+    .alerta {
+      padding: 0.75rem 1rem;
+      border-radius: var(--raio);
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+    }
+    .alerta-erro    { background: #f8d7da; border: 1px solid #f5c2c7; color: #842029; }
+    .alerta-sucesso { background: #d1e7dd; border: 1px solid #badbcc; color: #0f5132; }
+    .alerta-info    { background: #d0e4ff; border: 1px solid #b6d4fe; color: #084298; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th, td { padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid var(--cor-borda); }
+    th { font-weight: 600; color: var(--cor-texto-suave); background: var(--cor-fundo); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--cor-fundo); }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 2rem;
+      font-size: 0.775rem;
+      font-weight: 500;
+    }
+    .badge-pendente  { background: #fff3cd; color: var(--cor-aviso-texto); }
+    .badge-aprovado  { background: #d1e7dd; color: #0f5132; }
+    .badge-rejeitado { background: #f8d7da; color: #842029; }
+
+    form label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.3rem; }
+    form input, form textarea {
+      width: 100%;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.9rem;
+      border: 1px solid var(--cor-borda);
+      border-radius: var(--raio);
+      font-family: inherit;
+    }
+    form input:focus, form textarea:focus {
+      outline: none;
+      border-color: var(--cor-primaria);
+      box-shadow: 0 0 0 3px rgba(13,110,253,.15);
+    }
+    form .campo { margin-bottom: 1rem; }
+
+    .vazio {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--cor-texto-suave);
+      font-size: 0.9rem;
+    }
+
+    .htmx-indicator { opacity: 0; transition: opacity 0.2s; }
+    .htmx-request .htmx-indicator { opacity: 1; }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="marca" href="/fila">Caderneta</a>
+    {% if usuario %}
+    <nav>
+      <span>{{ usuario.nome }} · <em>{{ usuario.papel }}</em></span>
+      <button
+        hx-post="/logout"
+        hx-target="body"
+        hx-push-url="/login"
+      >Sair</button>
+    </nav>
+    {% endif %}
+  </header>
+
+  <main>
+    {% block conteudo %}{% endblock %}
+  </main>
+</body>
+</html>

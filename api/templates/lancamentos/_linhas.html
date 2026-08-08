@@ -1,0 +1,25 @@
+{# Fragmento renderizado em resposta a hx-get="/ui/fila/linhas".
+   Substituído no lugar de #fila — não inclui <html>/<body>/<head>. #}
+
+{% if lancamentos %}
+<table>
+  <thead>
+    <tr>
+      <th>Data</th>
+      <th>Descrição</th>
+      <th>Valor</th>
+      <th>Status</th>
+      <th style="text-align:right;">Ações</th>
+    </tr>
+  </thead>
+  <tbody id="linhas-fila">
+    {% for lanc in lancamentos %}
+    {% include "lancamentos/_linha.html" %}
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="vazio">
+  ✓ Nenhum lançamento pendente de aprovação.
+</div>
+{% endif %}

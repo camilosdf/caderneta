@@ -110,3 +110,12 @@ def require_role(*papeis_permitidos: str) -> Callable[[Usuario], Usuario]:
 def ambiente_dev() -> bool:
     """True se CADERNETA_ENV=dev — controla docs OpenAPI, https_only, etc."""
     return os.getenv("CADERNETA_ENV") == "dev"
+
+
+def get_templates():
+    """Retorna o engine Jinja2 apontando para api/templates/.
+    Mantido em dependencies.py para evitar import circular com api/main.py."""
+    from pathlib import Path
+    from fastapi.templating import Jinja2Templates
+    templates_dir = Path(__file__).resolve().parent / "templates"
+    return Jinja2Templates(directory=templates_dir)

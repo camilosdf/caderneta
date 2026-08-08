@@ -1,22 +1,29 @@
-"""FastAPI app factory — Interface Web do Caderneta (ADR 008, W1+W2).
+"""FastAPI app factory — Interface Web do Caderneta (ADR 008, W1-W4).
 
 W1: rotas de infraestrutura (/health, /ready, /live).
 W2: autenticação (login/logout via sessão assinada) + primeiro endpoint
 protegido (GET /lancamentos/pendentes).
+W3: aprovação/rejeição + verificar_endpoints_auth.py.
+W4: templates HTMX — fila de aprovação visual (Jinja2 + fragmentos parciais).
 
 Uso: uvicorn api.main:app
 """
 
 import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from api.auth.session import montar_session_middleware, obter_secret_key
 from api.routers import auth as auth_router
 from api.routers import lancamentos as lancamentos_router
+from api.routers import ui as ui_router
 from core.infra.db.session import SessionFactory, session_factory_from_env
+
+_RAIZ_API = Path(__file__).parent
 
 
 def _session_factory() -> Optional[SessionFactory]:
@@ -42,6 +49,12 @@ def create_app() -> FastAPI:
     )
 
     montar_session_middleware(app, obter_secret_key())
+
+    app.mount(
+        "/static",
+        StaticFiles(directory=str(_RAIZ_API / "static")),
+        name="static",
+    )
 
     # ── Rotas de infraestrutura — únicas isentas de autenticação ────────
     # (ADR 008 §8: /login, /logout, /health, /ready, /live, OpenAPI em dev)
@@ -74,9 +87,10 @@ def create_app() -> FastAPI:
 
         return JSONResponse({"status": "erro", "banco": "inacessível"}, status_code=503)
 
-    # ── Rotas autenticadas (W2) ──────────────────────────────────────────
+    # ── Rotas autenticadas (W2+W3+W4) ───────────────────────────────────
     app.include_router(auth_router.router)
     app.include_router(lancamentos_router.router)
+    app.include_router(ui_router.router)
 
     return app
 

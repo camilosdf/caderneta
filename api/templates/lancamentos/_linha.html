@@ -1,0 +1,120 @@
+{# Fragmento de uma linha + área inline de decisão.
+   Incluído em _linhas.html e também retornado como resposta de swap
+   parcial após aprovação/rejeição (para atualizar só a linha afetada). #}
+
+<tr id="lanc-{{ lanc.id }}">
+  <td>{{ lanc.data_lancamento.strftime('%d/%m/%Y') if lanc.data_lancamento else '—' }}</td>
+  <td>
+    <strong>{{ lanc.descricao[:60] }}</strong>
+    {% if lanc.categoria %}
+    <br><small style="color:var(--cor-texto-suave)">{{ lanc.categoria }}</small>
+    {% endif %}
+  </td>
+  <td style="white-space:nowrap;">
+    R$ {{ '%.2f'|format(lanc.valor_total) }}
+  </td>
+  <td>
+    <span class="badge badge-{{ lanc.status }}">{{ lanc.status }}</span>
+  </td>
+  <td style="text-align:right; white-space:nowrap;">
+    {% if lanc.status == 'pendente' %}
+    <button
+      class="btn btn-secundario"
+      style="font-size:0.8rem; padding:0.25rem 0.65rem;"
+      onclick="toggleDecisao('{{ lanc.id }}')"
+    >Decidir</button>
+    {% else %}
+    <span style="color:var(--cor-texto-suave); font-size:0.8rem;">—</span>
+    {% endif %}
+  </td>
+</tr>
+
+{% if lanc.status == 'pendente' %}
+<tr id="decisao-{{ lanc.id }}" style="display:none;" class="linha-decisao">
+  <td colspan="5" style="padding:0;">
+    <div style="padding:1rem 1.25rem; background:var(--cor-fundo); border-top:1px dashed var(--cor-borda);">
+      <div id="msg-{{ lanc.id }}"></div>
+
+      <form
+        id="form-{{ lanc.id }}"
+        style="display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap;"
+      >
+        <div style="flex:1; min-width:200px;">
+          <label for="just-{{ lanc.id }}" style="font-size:0.8rem;">
+            Justificativa
+            {% if lanc.valor_total > 5000 %}
+            <span style="color:var(--cor-perigo);">*</span>
+            {% endif %}
+          </label>
+          <input
+            type="text"
+            id="just-{{ lanc.id }}"
+            name="justificativa"
+            placeholder="Opcional para aprovação rotineira; obrigatória para rejeição e alto valor"
+            style="font-size:0.85rem;"
+          >
+        </div>
+
+        <button
+          type="button"
+          class="btn btn-sucesso"
+          style="font-size:0.8rem;"
+          hx-post="/lancamentos/{{ lanc.id }}/aprovar"
+          hx-include="#form-{{ lanc.id }}"
+          hx-target="#lanc-{{ lanc.id }}"
+          hx-swap="outerHTML"
+          hx-on::after-request="limparDecisao('{{ lanc.id }}', event)"
+          hx-indicator="#spin-{{ lanc.id }}"
+        >
+          <span id="spin-{{ lanc.id }}" class="spinner htmx-indicator" style="opacity:0"></span>
+          Aprovar
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-perigo"
+          style="font-size:0.8rem;"
+          hx-post="/lancamentos/{{ lanc.id }}/rejeitar"
+          hx-include="#form-{{ lanc.id }}"
+          hx-target="#lanc-{{ lanc.id }}"
+          hx-swap="outerHTML"
+          hx-on::after-request="limparDecisao('{{ lanc.id }}', event)"
+          hx-indicator="#spin-{{ lanc.id }}"
+        >
+          Rejeitar
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-secundario"
+          style="font-size:0.8rem;"
+          onclick="toggleDecisao('{{ lanc.id }}')"
+        >Cancelar</button>
+      </form>
+    </div>
+  </td>
+</tr>
+{% endif %}
+
+<script>
+  function toggleDecisao(id) {
+    const tr = document.getElementById('decisao-' + id);
+    if (!tr) return;
+    tr.style.display = tr.style.display === 'none' ? 'table-row' : 'none';
+  }
+
+  function limparDecisao(id, event) {
+    // Resposta de erro HTTP (4xx/5xx): mostrar mensagem inline, não limpar a linha
+    if (!event.detail.successful || event.detail.xhr.status >= 400) {
+      let msg = 'Erro na operação.';
+      try { msg = JSON.parse(event.detail.xhr.responseText).detail || msg; } catch(_) {}
+      const el = document.getElementById('msg-' + id);
+      if (el) {
+        el.innerHTML = '<div class="alerta alerta-erro">' + msg + '</div>';
+      }
+      return;
+    }
+    // Sucesso: a linha foi substituída via hx-swap=outerHTML — a linha de
+    // decisão não existe mais no DOM; nada a limpar.
+  }
+</script>

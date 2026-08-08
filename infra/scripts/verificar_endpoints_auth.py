@@ -20,7 +20,7 @@ from pathlib import Path
 # Lista fechada de exceções — qualquer rota fora daqui exige autenticação.
 # Ver ADR 008 §8. /health, /ready, /live não aparecem aqui pois nunca são
 # definidas via @router (são @app direto em api/main.py).
-ROTAS_ISENTAS_DE_AUTH = {"/login", "/logout"}
+ROTAS_ISENTAS_DE_AUTH = {"/login", "/logout", "/"}
 
 DECORATORES_DE_ROTA = {"get", "post", "put", "delete", "patch"}
 

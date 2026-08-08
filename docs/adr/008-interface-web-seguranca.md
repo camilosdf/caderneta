@@ -445,7 +445,7 @@ Revisar quando lançamentos passarem a ser criados por usuários via API.
 
 Sequência de implementação:
 
-- **W1** — esqueleto FastAPI + `api/` + extensão do ADR 006 + `UsuarioORM`/`UsuarioRepository`
-- **W2** — endpoint só-leitura: listar lançamentos pendentes
-- **W3** — endpoint de aprovação/rejeição + login/logout + `verificar_endpoints_auth.py`
-- **W4** — templates HTMX (fila de aprovação visual)
+- **W1** — esqueleto FastAPI + `api/` + extensão do ADR 006 + `UsuarioORM`/`UsuarioRepository` ✅
+- **W2** — login/logout + `GET /lancamentos/pendentes` ✅
+- **W3** — `POST aprovar/rejeitar` + `verificar_endpoints_auth.py` ✅
+- **W4** — templates HTMX (fila de aprovação visual) ✅

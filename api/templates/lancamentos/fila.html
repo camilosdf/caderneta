@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Fila de aprovação — Caderneta{% endblock %}
+
+{% block conteudo %}
+<h1>Fila de aprovação</h1>
+
+<div id="msg-global"></div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+  <div
+    id="fila"
+    hx-get="/ui/fila/linhas"
+    hx-trigger="load"
+    hx-indicator="#spinner-fila"
+  >
+    <div class="vazio">
+      <span id="spinner-fila" class="spinner htmx-indicator" style="opacity:0"></span>
+      <span style="margin-left:.5rem;">Carregando lançamentos…</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
