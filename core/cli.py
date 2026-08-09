@@ -18,13 +18,13 @@ Persistência (A5):
 """
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
+from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import print as rprint
 
 from core.versao import VERSAO as _VERSAO
 
@@ -48,6 +48,7 @@ def _session_factory(pasta_datalake: Path):
     """Retorna SessionFactory apontando para SQLite em pasta_datalake,
     ou para DATABASE_URL se definida (produção/PostgreSQL)."""
     import os
+
     from core.infra.db.session import SessionFactory
 
     url = os.getenv("DATABASE_URL")
@@ -67,6 +68,7 @@ def _event_bus():
 
 def _policy_engine():
     from decimal import Decimal
+
     from core.policies.engine import PolicyEngine
     try:
         import os
@@ -80,6 +82,7 @@ def _classification_port():
     """Carrega regras do arquivo JSON se disponível, senão lista vazia."""
     import json
     import uuid as _uuid
+
     from core.domain.entities import CodigoConta
     from core.rule_engine.classification_impl import RegrasDeterministicasPlugin
     from core.rule_engine.rule_entity import RegraClassificacaoV2
@@ -273,7 +276,7 @@ def importar(
     caminho_csv: Annotated[Path, typer.Argument(help="CSV a marcar como importado")],
     aprovado_por: Annotated[str, typer.Option("--aprovado-por", help="E-mail ou nome do aprovador")],
     datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
-    obs: Annotated[Optional[str], typer.Option("--obs", help="Observações")] = None,
+    obs: Annotated[str | None, typer.Option("--obs", help="Observações")] = None,
 ):
     """Registra no audit log que o CSV foi importado manualmente no GnuCash."""
 
@@ -282,6 +285,7 @@ def importar(
         raise typer.Exit(1)
 
     import hashlib
+
     from core.audit.chain import TipoEvento
     from core.infra.unit_of_work import UnitOfWork
 
@@ -336,6 +340,7 @@ def dry_run(
         raise typer.Exit(1)
 
     import tempfile
+
     from core.infra.db.session import SessionFactory
 
     rprint(Panel(
@@ -363,7 +368,7 @@ def dry_run(
 
         for arquivo in arquivos:
             r = _executar_para_arquivo(use_case, arquivo, usuario, empresa)
-            l = r.get("lancamentos", 0)
+            l = r.get("lancamentos", 0)  # noqa: E741
             rv = r.get("revisao", 0)
             total_l += l
             total_r += rv
@@ -423,8 +428,7 @@ def status(
 ):
     """Exibe o estado do sistema e estatísticas do audit log."""
     from core.infra.unit_of_work import UnitOfWork
-
-    from core.versao import VERSAO as _v
+    from core.versao import VERSAO as _v  # noqa: N811
     cor_status = "green" if _v.e_producao else "yellow"
     rprint(Panel(
         f"[bold]Caderneta[/bold] [bold]{_v.exibicao}[/bold]\n"
@@ -496,7 +500,7 @@ def periodo_fechar(
             uow.commit()
     except ValueError as e:
         rprint(f"[red]❌ {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1)  # noqa: B904
 
     rprint(Panel(
         f"[bold green]✅ Período fechado[/bold green]\n\n"
@@ -588,7 +592,7 @@ app.add_typer(lancamentos_app, name="lancamentos")
 @lancamentos_app.command(name="listar")
 def lancamentos_listar(
     empresa: Annotated[str, typer.Option("--empresa")] = "local",
-    status: Annotated[Optional[str], typer.Option(
+    status: Annotated[str | None, typer.Option(
         "--status", help="rascunho|pendente|aprovado|rejeitado|exportado"
     )] = None,
     datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
@@ -611,7 +615,7 @@ def lancamentos_listar(
                 f"[red]Status inválido: '{status}'. "
                 f"Use: {', '.join(s.value for s in StatusLancamento)}[/red]"
             )
-            raise typer.Exit(1)
+            raise typer.Exit(1)  # noqa: B904
 
     with UnitOfWork(session_factory) as uow:
         lancamentos = uow.lancamentos.listar_por_empresa(
@@ -630,7 +634,7 @@ def lancamentos_listar(
     tabela.add_column("Status")
     tabela.add_column("GUID GnuCash", width=12)
 
-    for l in lancamentos:
+    for l in lancamentos:  # noqa: E741
         status_cor = {
             "exportado": "cyan",
             "aprovado": "green",
@@ -662,17 +666,18 @@ def lancamentos_vincular_guid(
     a trilha de conciliação entre Caderneta e GnuCash.
     """
     from uuid import UUID
+
     from core.infra.unit_of_work import UnitOfWork
     from shared.identifiers import empresa_id_from_string
 
-    empresa_id = empresa_id_from_string(empresa)
+    empresa_id = empresa_id_from_string(empresa)  # noqa: F841
     session_factory = _session_factory(datalake)
 
     try:
         lanc_uuid = UUID(lancamento_id)
     except ValueError:
         rprint(f"[red]ID inválido: '{lancamento_id}'. Informe o UUID completo.[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1)  # noqa: B904
 
     with UnitOfWork(session_factory) as uow:
         lancamento = uow.lancamentos.buscar_por_id(lanc_uuid)
@@ -721,7 +726,7 @@ def centro_custo_criar(
             uow.commit()
     except CentroCustoJaExisteError as e:
         rprint(f"[red]❌ {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1)  # noqa: B904
 
     rprint(Panel(
         f"[bold green]✅ Centro de custo criado[/bold green]\n\n"
@@ -817,6 +822,230 @@ def centro_custo_ativar(
 
 # =============================================================
 # HELPERS INTERNOS
+
+# =============================================================
+# CONCILIAÇÃO BANCÁRIA — Etapa 8
+# =============================================================
+
+conciliacao_app = typer.Typer(help="Motor de Conciliação Bancária (Etapa 8).")
+app.add_typer(conciliacao_app, name="conciliacao")
+
+
+@conciliacao_app.command(name="importar")
+def conciliacao_importar(
+    arquivo: Path = typer.Argument(..., help="Arquivo OFX/QFX do extrato bancário."),  # noqa: B008
+    empresa: str = typer.Option(..., "--empresa", "-e", help="ID da empresa."),
+    pasta_datalake: Path = typer.Option(  # noqa: B008
+        Path("datalake"), "--datalake", "-d", help="Pasta do datalake."
+    ),
+) -> None:
+    """Importa um extrato OFX e persiste as transações bancárias.
+
+    Idempotente: reimportar o mesmo arquivo não cria duplicatas.
+    """
+    import uuid
+
+    from rich.console import Console
+
+    from core.adapters.ofx_bank_statement import OFXBankStatementAdapter
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    console = Console()
+
+    if not arquivo.exists():
+        console.print(f"[red]Arquivo não encontrado: {arquivo}[/red]")
+        raise typer.Exit(1)
+
+    empresa_id = empresa_id_from_string(empresa)
+    id_importacao = str(uuid.uuid4())
+    sf = _session_factory(pasta_datalake)
+    adapter = OFXBankStatementAdapter()
+
+    # Detectar conta antes de importar
+    conta = adapter.detectar_conta(arquivo)
+    if conta:
+        console.print(f"Conta detectada: [cyan]{conta}[/cyan]")
+
+    transacoes = adapter.importar(arquivo, empresa_id, id_importacao)
+
+    inseridas = 0
+    duplicatas = 0
+
+    with UnitOfWork(sf) as uow:
+        for tx in transacoes:
+            if uow.transacoes_bancarias.salvar_se_nova(tx):
+                inseridas += 1
+            else:
+                duplicatas += 1
+        uow.commit()
+
+    console.print(
+        f"[green]✓[/green] Importadas: [bold]{inseridas}[/bold] transações "
+        f"| Duplicatas ignoradas: [yellow]{duplicatas}[/yellow]"
+    )
+
+
+@conciliacao_app.command(name="executar")
+def conciliacao_executar(
+    empresa: str = typer.Option(..., "--empresa", "-e", help="ID da empresa."),
+    periodo: str = typer.Option(
+        ..., "--periodo", "-p",
+        help="Período no formato YYYY-MM (ex: 2026-07)."
+    ),
+    pasta_datalake: Path = typer.Option(  # noqa: B008
+        Path("datalake"), "--datalake", "-d", help="Pasta do datalake."
+    ),
+    tolerancia_valor: float = typer.Option(
+        0.10, "--tol-valor", help="Tolerância de valor em R$."
+    ),
+    tolerancia_dias: int = typer.Option(
+        2, "--tol-dias", help="Tolerância de data em dias."
+    ),
+) -> None:
+    """Executa o motor de conciliação para o período informado."""
+    import calendar
+    from datetime import date
+    from decimal import Decimal
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from core.domain.entities import StatusLancamento
+    from core.infra.unit_of_work import UnitOfWork
+    from core.rule_engine.motor_conciliacao import MotorConciliacao, ToleranciasConciliacao
+    from shared.identifiers import empresa_id_from_string
+
+    console = Console()
+
+    try:
+        ano, mes = int(periodo[:4]), int(periodo[5:7])
+        data_inicio = date(ano, mes, 1)
+        data_fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+    except (ValueError, IndexError):
+        console.print("[red]Formato de período inválido. Use YYYY-MM (ex: 2026-07).[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    empresa_id = empresa_id_from_string(empresa)
+    sf = _session_factory(pasta_datalake)
+
+    with UnitOfWork(sf) as uow:
+        transacoes = uow.transacoes_bancarias.listar_por_empresa_e_periodo(
+            empresa_id, data_inicio, data_fim
+        )
+        lancamentos = uow.lancamentos.listar_por_empresa(
+            empresa_id, status=StatusLancamento.APROVADO
+        )
+        lancamentos = [
+            lanc for lanc in lancamentos
+            if lanc.data_lancamento
+            and data_inicio <= lanc.data_lancamento <= data_fim
+        ]
+
+    console.print(
+        f"Período: [cyan]{data_inicio}[/cyan] a [cyan]{data_fim}[/cyan] | "
+        f"Transações bancárias: [bold]{len(transacoes)}[/bold] | "
+        f"Lançamentos aprovados: [bold]{len(lancamentos)}[/bold]"
+    )
+
+    tol = ToleranciasConciliacao(
+        valor=Decimal(str(tolerancia_valor)),
+        dias=tolerancia_dias,
+    )
+    motor = MotorConciliacao(tolerancias=tol)
+    relatorio = motor.conciliar(
+        lancamentos=lancamentos,
+        transacoes=transacoes,
+        empresa_id=empresa_id,
+        periodo_inicio=data_inicio,
+        periodo_fim=data_fim,
+    )
+
+    # Exibir resumo
+    tabela = Table(title=f"Relatório de Conciliação — {periodo}")
+    tabela.add_column("Status", style="bold")
+    tabela.add_column("Quantidade", justify="right")
+    tabela.add_column("% do total", justify="right")
+
+    total = relatorio.total_itens or 1
+    for status, itens in [
+        ("✓ Conciliado",   relatorio.conciliados),
+        ("⚠ Divergente",   relatorio.divergentes),
+        ("? Ambíguo",      relatorio.ambiguos),
+        ("○ Pendente",     relatorio.pendentes),
+        ("✗ Sem documento", relatorio.sem_documento),
+        ("⊗ Duplicado",    relatorio.duplicados),
+    ]:
+        pct = f"{len(itens)/total*100:.1f}%"
+        tabela.add_row(status, str(len(itens)), pct)
+
+    console.print(tabela)
+    console.print(
+        f"Conciliação automática: [bold]{relatorio.percentual_conciliado:.1f}%[/bold]"
+    )
+
+
+@conciliacao_app.command(name="listar")
+def conciliacao_listar(
+    empresa: str = typer.Option(..., "--empresa", "-e", help="ID da empresa."),
+    periodo: str = typer.Option(
+        ..., "--periodo", "-p", help="Período YYYY-MM."
+    ),
+    pasta_datalake: Path = typer.Option(  # noqa: B008
+        Path("datalake"), "--datalake", "-d", help="Pasta do datalake."
+    ),
+) -> None:
+    """Lista transações bancárias importadas para o período."""
+    import calendar
+    from datetime import date
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    console = Console()
+
+    try:
+        ano, mes = int(periodo[:4]), int(periodo[5:7])
+        data_inicio = date(ano, mes, 1)
+        data_fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+    except (ValueError, IndexError):
+        console.print("[red]Formato inválido. Use YYYY-MM.[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    empresa_id = empresa_id_from_string(empresa)
+    sf = _session_factory(pasta_datalake)
+
+    with UnitOfWork(sf) as uow:
+        transacoes = uow.transacoes_bancarias.listar_por_empresa_e_periodo(
+            empresa_id, data_inicio, data_fim
+        )
+
+    if not transacoes:
+        console.print("[yellow]Nenhuma transação bancária encontrada para o período.[/yellow]")
+        return
+
+    tabela = Table(title=f"Transações Bancárias — {periodo}")
+    tabela.add_column("Data")
+    tabela.add_column("FITID")
+    tabela.add_column("Descrição")
+    tabela.add_column("Natureza")
+    tabela.add_column("Valor", justify="right")
+
+    for tx in transacoes:
+        tabela.add_row(
+            str(tx.data),
+            tx.fitid[:20],
+            tx.descricao[:40],
+            tx.natureza.value,
+            f"R$ {tx.valor.valor:,.2f}",
+        )
+
+    console.print(tabela)
+    console.print(f"Total: [bold]{len(transacoes)}[/bold] transações")
+
 # =============================================================
 
 def _listar_arquivos(caminho: Path) -> list[Path]:

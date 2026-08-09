@@ -294,3 +294,38 @@ class UsuarioORM(Base):
 
     def __repr__(self) -> str:
         return f"<UsuarioORM {self.email} papel={self.papel}>"
+
+
+class TransacaoBancariaORM(Base):
+    """Persiste TransacaoBancaria — movimentos bancários importados de OFX.
+
+    Unicidade garantida por (instituicao, numero_conta, fitid) —
+    chave natural de idempotência da importação OFX.
+    """
+
+    __tablename__ = "transacoes_bancarias"
+    __table_args__ = (
+        UniqueConstraint(
+            "instituicao", "numero_conta", "fitid",
+            name="uq_transacao_bancaria_fitid",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    instituicao: Mapped[str] = mapped_column(String(20), nullable=False)
+    agencia: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    numero_conta: Mapped[str] = mapped_column(String(50), nullable=False)
+    tipo_conta: Mapped[str] = mapped_column(String(20), nullable=False, default="corrente")
+    fitid: Mapped[str] = mapped_column(String(100), nullable=False)
+    data: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    valor: Mapped[str] = mapped_column(String(20), nullable=False)  # Decimal como string
+    natureza: Mapped[str] = mapped_column(String(10), nullable=False)
+    descricao: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    referencia: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    origem: Mapped[str] = mapped_column(String(20), nullable=False, default="ofx")
+    id_importacao: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<TransacaoBancariaORM {self.fitid} {self.data} {self.valor}>"

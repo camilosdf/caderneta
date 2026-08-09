@@ -21,6 +21,7 @@ from core.infra.repositories.centro_custo_repository import CentroCustoRepositor
 from core.infra.repositories.documento_repository import DocumentoRepository
 from core.infra.repositories.lancamento_repository import LancamentoRepository
 from core.infra.repositories.periodo_contabil_repository import PeriodoContabilRepository
+from core.infra.repositories.transacao_bancaria_repository import TransacaoBancariaRepository
 from core.infra.repositories.usuario_repository import UsuarioRepository
 
 
@@ -44,6 +45,7 @@ class UnitOfWork:
         self.periodos: Optional[PeriodoContabilRepository] = None
         self.centros_custo: Optional[CentroCustoRepository] = None
         self.usuarios: Optional[UsuarioRepository] = None
+        self.transacoes_bancarias: Optional[TransacaoBancariaRepository] = None
 
     def __enter__(self) -> "UnitOfWork":
         self._session = self._session_factory._session_factory()
@@ -55,6 +57,7 @@ class UnitOfWork:
         self.periodos = PeriodoContabilRepository(self._session)
         self.centros_custo = CentroCustoRepository(self._session)
         self.usuarios = UsuarioRepository(self._session)
+        self.transacoes_bancarias = TransacaoBancariaRepository(self._session)
 
         return self
 
@@ -78,6 +81,7 @@ class UnitOfWork:
             self.periodos = None
             self.centros_custo = None
             self.usuarios = None
+            self.transacoes_bancarias = None
 
     def commit(self) -> None:
         """Confirma todas as operações realizadas nos repositórios desta UoW."""

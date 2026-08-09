@@ -22,6 +22,7 @@ from core.infra.db.models import (  # noqa: F401
     LancamentoORM,
     PeriodoContabilORM,
     SplitORM,
+    TransacaoBancariaORM,
     UsuarioORM,
 )
 
