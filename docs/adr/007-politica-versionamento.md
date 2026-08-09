@@ -156,3 +156,37 @@ mais limpa e legível.
 - Requer disciplina para não avançar o segundo dígito sem entregar
   o conteúdo da etapa correspondente
 - A versão `0.999` pode causar estranheza — documentar bem nos releases
+
+---
+
+## Estado atual e próximos passos (agosto de 2026)
+
+**Estado em v0.014.003:**
+
+As Etapas 6 (Interface Web), 7 (IA como Plugin) e 8 (Conciliação Bancária) foram
+concluídas. O sistema conta com 668 testes passando e três verificadores automatizados
+em CI (isolamento, hermeticidade, autenticação de endpoints).
+
+**Etapa 9 — Pré-Homologação (Gate 0) em andamento:**
+
+A Matriz de Prontidão para v0.999 foi produzida em agosto de 2026 com 31 itens
+classificados. O congelamento em `v0.999` está bloqueado por:
+
+1. **BLOQUEADOR técnico:** `TipoEvento.VERSAO_HOMOLOGADA` não existe ainda em
+   `core/audit/chain.py` — necessário para o evento de homologação exigido por
+   este ADR.
+2. **BLOQUEADOR técnico:** migration Alembic para `transacoes_bancarias` não gerada
+   (tabela criada no ORM mas ausente no PostgreSQL de produção).
+3. **Decisão pendente (D1):** segregação de funções criador ≠ aprovador — requer
+   deliberação do Especialista em Controles Internos antes de classificar como
+   BLOQUEADOR ou como limitação aceita de v1.0.0.
+
+**Sequência para v0.999:**
+
+1. Deliberação formal dos 7 itens DECISÃO (Pauta de Deliberação Gate 0)
+2. Resolução dos 2 bloqueadores técnicos
+3. Criação da tag `v0.999.0` e congelamento de código
+4. Validação pelo Contador CRC com dados reais
+5. Validação pelo Especialista em Controles (verificação da hash chain)
+6. Gravação de `VERSAO_HOMOLOGADA` na hash chain
+7. Criação da tag `v1.0.0`

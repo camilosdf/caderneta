@@ -127,3 +127,64 @@ avançada/Open Finance).
 
 **Marco de primeiro valor de negócio:** Sprint 6 — CSV com hash de
 integridade gerado automaticamente para o contador.
+
+---
+
+## Emenda E-13 — Conclusão das Etapas 6, 7 e 8 (agosto de 2026)
+
+**Problema identificado:** A Emenda E-12 registrou explicitamente que as Etapas 6
+(Interface Web), 7 (IA como Plugin) e 8 (Conciliação Bancária) estavam pendentes
+quando o projeto chegou em v0.9.0. Esta emenda registra a conclusão das três etapas.
+
+**Etapa 6 — Interface Web (W1–W4):**
+- W1: esqueleto FastAPI + `UsuarioORM`/`UsuarioRepository` + fix crítico em
+  `verificar_isolamento.py` (nunca havia escaneado arquivos de fato)
+- W2: login/logout com cookie de sessão + `current_authentication_id` no banco
+  (vulnerabilidade de sessão encontrada em teste e corrigida antes do merge)
+- W3: `POST /aprovar` e `/rejeitar` com RBAC via `PolicyEngine`; dois débitos
+  técnicos do ADR 008 resolvidos (`PolicyEngine` conectado ao `Usuario`,
+  `PeriodoFechadoError` efetivamente levantada)
+- W4: templates HTMX (fila de aprovação visual, htmx 2.0.10 vendorizado)
+- Terceiro verificador automatizado: `verificar_endpoints_auth.py`
+
+**Etapa 7 — IA como Plugin (7.1–7.5):**
+- 7.1: `EmbeddingProvider` Protocol + `EmbeddingsPlugin` + `ClassifierOrchestrator`
+  (composição regras→embeddings no Orchestrator, nunca nos plugins)
+- 7.2: `SentenceTransformerProvider` (paraphrase-multilingual-MiniLM-L12-v2, 384 dim,
+  lazy, `_modelo_instancia` para injeção em testes — eliminou 72s da suite)
+- 7.3: `HistoricoRepository` + `EmbeddingsIndexer` (histórico aprovado como base
+  de candidatos; embeddings computados em batch)
+- 7.4: `OCRPlugin` (adapter `SpikeOCR → ExtractionPort`) + correções Ruff em `ai/`
+- 7.5: `LLMPort` Protocol + `LLMPlugin` + `FakeLLMProvider` + Orchestrator com
+  terceira camada LLM (regras→embeddings→LLM→fallback)
+- `confidence=1.0` reservado para regras; LLM clipado em 0.98; sem histórico →
+  `precisa_revisao=True` sem fabricar sugestão
+
+**Etapa 8 — Conciliação Bancária (8.1–8.4):**
+- 8.1: `TransacaoBancaria`, `ContaBancaria`, `ConciliacaoItem`, `RelatorioConciliacao`,
+  `BankStatementPort`, 7 novos `TipoEvento` de conciliação
+- 8.2: `MotorConciliacao` — matching determinístico em camadas (FITID → valor+data →
+  descrição → unicidade); todos os critérios de aceite do parecer cobertos
+- 8.3: `OFXBankStatementAdapter` — importação idempotente com chave
+  `(instituição, conta, FITID)`
+- 8.4: `TransacaoBancariaRepository` + CLI `conciliacao importar/executar/listar`
+- `BankStatementPort` preparado para Open Finance (adaptador real pós-v1.0.0)
+
+**Achados relevantes durante as Etapas 6–8 (registrados como aprendizado):**
+- `verificar_isolamento.py` nunca havia escaneado nenhum arquivo (bug de path)
+- Logout não invalidava sessão real (Starlette SessionMiddleware é client-side)
+- `PeriodoFechadoError` definida desde a Etapa 5, nunca levantada; `ProcessarDocumentoUseCase`
+  não a capturava
+- FastAPI 0.141.x retorna 405 quando GET e POST da mesma rota ficam em routers separados
+
+**Decisão:** Registrar a conclusão das Etapas 6, 7 e 8. O estado atual do sistema é
+v0.014.003 com 668 testes passando. A próxima etapa formal é a Etapa 9 — Pré-Homologação
+(Gate 0), cujos artefatos foram produzidos em agosto de 2026:
+- Matriz de Prontidão para v0.999 (31 itens, 21 conformes, 7 decisões, 2 bloqueadores)
+- Pauta de Deliberação Gate 0 (7 itens de decisão + registro de Open Finance pós-v1.0.0)
+
+`VERSAO_ATUAL` permanece `"0.9.0"` até deliberação formal do Item D2 da Pauta de
+Deliberação Gate 0.
+
+**Data:** 2026-08
+**Aprovado por:** Proprietário do Produto (Camilo)
