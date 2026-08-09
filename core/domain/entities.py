@@ -16,13 +16,12 @@ Correções v0.3.2:
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 from uuid import UUID, uuid4
 
-UTC = timezone.utc
+UTC = UTC
 
 
 def _agora() -> datetime:
@@ -34,7 +33,7 @@ def _agora() -> datetime:
 # ENUMERAÇÕES DE DOMÍNIO
 # =============================================================
 
-class TipoDocumento(str, Enum):
+class TipoDocumento(StrEnum):
     NFE_XML       = "nfe_xml"
     OFX           = "ofx"
     CSV           = "csv"
@@ -44,7 +43,7 @@ class TipoDocumento(str, Enum):
     DESCONHECIDO  = "desconhecido"
 
 
-class FonteExtracao(str, Enum):
+class FonteExtracao(StrEnum):
     XML        = "xml"
     OFX        = "ofx"
     CSV        = "csv"
@@ -54,17 +53,17 @@ class FonteExtracao(str, Enum):
     MANUAL     = "manual"
 
 
-class NaturezaLancamento(str, Enum):
+class NaturezaLancamento(StrEnum):
     DEBITO  = "debito"
     CREDITO = "credito"
 
 
-class RegimeContabil(str, Enum):
+class RegimeContabil(StrEnum):
     COMPETENCIA = "competencia"
     CAIXA       = "caixa"
 
 
-class StatusLancamento(str, Enum):
+class StatusLancamento(StrEnum):
     RASCUNHO  = "rascunho"
     PENDENTE  = "pendente"
     APROVADO  = "aprovado"
@@ -72,12 +71,12 @@ class StatusLancamento(str, Enum):
     EXPORTADO = "exportado"
 
 
-class StatusPeriodo(str, Enum):
+class StatusPeriodo(StrEnum):
     ABERTO  = "aberto"
     FECHADO = "fechado"
 
 
-class NivelAprovacao(str, Enum):
+class NivelAprovacao(StrEnum):
     AUTOMATICO       = "automatico"
     UM_APROVADOR     = "um_aprovador"
     DOIS_APROVADORES = "dois_aprovadores"
@@ -139,7 +138,7 @@ class CNPJ:
 
     @staticmethod
     def _calc_digito(nums: list[int], pesos: tuple[int, ...]) -> int:
-        soma = sum(n * p for n, p in zip(nums, pesos))
+        soma = sum(n * p for n, p in zip(nums, pesos, strict=False))
         resto = soma % 11
         return 0 if resto < 2 else 11 - resto
 
@@ -237,7 +236,7 @@ class ConfidenceScore:
 class Empresa:
     """Empresa dona do livro contábil."""
     id: UUID = field(default_factory=uuid4)
-    cnpj: Optional[CNPJ] = None
+    cnpj: CNPJ | None = None
     nome: str = ""
     regime: RegimeContabil = RegimeContabil.COMPETENCIA
     moeda: str = "BRL"
@@ -252,8 +251,8 @@ class PeriodoContabil:
     ano: int = 0
     mes: int = 0
     status: StatusPeriodo = StatusPeriodo.ABERTO
-    fechado_por: Optional[str] = None
-    fechado_em: Optional[datetime] = None
+    fechado_por: str | None = None
+    fechado_em: datetime | None = None
 
     def fechar(self, responsavel: str) -> None:
         if self.status == StatusPeriodo.FECHADO:
@@ -288,10 +287,10 @@ class ContaContabil:
     nome: str = ""
     tipo: str = ""
     natureza: NaturezaLancamento = NaturezaLancamento.DEBITO
-    guid_gnucash: Optional[str] = None
+    guid_gnucash: str | None = None
     permite_lancamento: bool = True
     centro_custo_obrigatorio: bool = False
-    conta_pai_id: Optional[UUID] = None
+    conta_pai_id: UUID | None = None
     versao: int = 1
 
     def validar_para_lancamento(self) -> None:
@@ -308,14 +307,14 @@ class Fornecedor:
     id: UUID = field(default_factory=uuid4)
     empresa_id: UUID = field(default_factory=uuid4)
     nome_canonico: str = ""
-    cnpj: Optional[CNPJ] = None
-    categoria: Optional[str] = None
-    conta_debito_padrao: Optional[CodigoConta] = None
-    conta_credito_padrao: Optional[CodigoConta] = None
-    centro_custo_padrao: Optional[str] = None
+    cnpj: CNPJ | None = None
+    categoria: str | None = None
+    conta_debito_padrao: CodigoConta | None = None
+    conta_credito_padrao: CodigoConta | None = None
+    centro_custo_padrao: str | None = None
     aliases: list[str] = field(default_factory=list)
     total_lancamentos: int = 0
-    ultima_ocorrencia: Optional[date] = None
+    ultima_ocorrencia: date | None = None
     criado_em: datetime = field(default_factory=_agora)
 
     def registrar_ocorrencia(self, data: date) -> None:
@@ -336,8 +335,8 @@ class MetadadosNFe:
     natureza_operacao_texto: str               # <natOp> — texto livre
     cfop_itens: tuple[str, ...]                # CFOPs de todos os itens
     ncm_itens: tuple[str, ...]                 # NCMs de todos os itens
-    cst_icms: Optional[str]                    # CST ou CSOSN predominante
-    cnpj_destinatario: Optional[CNPJ]
+    cst_icms: str | None                    # CST ou CSOSN predominante
+    cnpj_destinatario: CNPJ | None
     valor_icms: Dinheiro
     valor_pis: Dinheiro
     valor_cofins: Dinheiro
@@ -352,7 +351,7 @@ class MetadadosNFe:
         return self.finalidade == 2
 
     @property
-    def cfop_predominante(self) -> Optional[str]:
+    def cfop_predominante(self) -> str | None:
         """CFOP mais frequente nos itens."""
         if not self.cfop_itens:
             return None
@@ -373,24 +372,24 @@ class Documento:
     tipo: TipoDocumento = TipoDocumento.DESCONHECIDO
     fonte_extracao: FonteExtracao = FonteExtracao.MANUAL
 
-    cnpj_emitente: Optional[CNPJ] = None
-    nome_emitente: Optional[str] = None
-    data_emissao: Optional[date] = None
-    data_vencimento: Optional[date] = None
-    valor_total: Optional[Dinheiro] = None
+    cnpj_emitente: CNPJ | None = None
+    nome_emitente: str | None = None
+    data_emissao: date | None = None
+    data_vencimento: date | None = None
+    valor_total: Dinheiro | None = None
     valor_desconto: Dinheiro = field(default_factory=lambda: Dinheiro(Decimal("0")))
-    valor_liquido: Optional[Dinheiro] = None
+    valor_liquido: Dinheiro | None = None
 
-    chave_acesso: Optional[str] = None
-    numero_documento: Optional[str] = None
-    cfop: Optional[str] = None
-    natureza_operacao: Optional[NaturezaLancamento] = None
+    chave_acesso: str | None = None
+    numero_documento: str | None = None
+    cfop: str | None = None
+    natureza_operacao: NaturezaLancamento | None = None
 
-    metadados_nfe: Optional[MetadadosNFe] = None
+    metadados_nfe: MetadadosNFe | None = None
 
     confidence_scores: list[ConfidenceScore] = field(default_factory=list)
     precisa_revisao: bool = False
-    motivo_revisao: Optional[str] = None
+    motivo_revisao: str | None = None
 
     data_processamento: datetime = field(default_factory=_agora)
 
@@ -412,14 +411,14 @@ class RegraClassificacao:
     empresa_id: UUID = field(default_factory=uuid4)
     nome: str = ""
     condicao: dict = field(default_factory=dict)
-    categoria: Optional[str] = None
-    conta_debito: Optional[CodigoConta] = None
-    conta_credito: Optional[CodigoConta] = None
-    centro_custo: Optional[str] = None
+    categoria: str | None = None
+    conta_debito: CodigoConta | None = None
+    conta_credito: CodigoConta | None = None
+    centro_custo: str | None = None
     prioridade: int = 100
     ativa: bool = True
     versao: int = 1
-    criada_por: Optional[str] = None
+    criada_por: str | None = None
     criada_em: datetime = field(default_factory=_agora)
 
 
@@ -430,8 +429,8 @@ class Split:
     conta: CodigoConta = field(default_factory=lambda: CodigoConta("1.1"))
     natureza: NaturezaLancamento = NaturezaLancamento.DEBITO
     valor: Dinheiro = field(default_factory=lambda: Dinheiro(Decimal("0")))
-    centro_custo: Optional[str] = None
-    descricao: Optional[str] = None
+    centro_custo: str | None = None
+    descricao: str | None = None
 
 
 @dataclass
@@ -443,37 +442,37 @@ class Lancamento:
     """
     id: UUID = field(default_factory=uuid4)
     empresa_id: UUID = field(default_factory=uuid4)
-    documento_id: Optional[UUID] = None
-    fornecedor_id: Optional[UUID] = None
+    documento_id: UUID | None = None
+    fornecedor_id: UUID | None = None
 
-    data_lancamento: Optional[date] = None
-    data_competencia: Optional[date] = None
+    data_lancamento: date | None = None
+    data_competencia: date | None = None
     descricao: str = ""
-    historico_padronizado: Optional[str] = None
+    historico_padronizado: str | None = None
 
     splits: list[Split] = field(default_factory=list)
 
     e_parcelado: bool = False
-    parcela_atual: Optional[int] = None
-    total_parcelas: Optional[int] = None
-    lancamento_pai_id: Optional[UUID] = None
+    parcela_atual: int | None = None
+    total_parcelas: int | None = None
+    lancamento_pai_id: UUID | None = None
 
-    categoria: Optional[str] = None
-    confidence: Optional[float] = None
-    metodo_classificacao: Optional[str] = None
-    regra_aplicada_id: Optional[UUID] = None
-    versao_regra: Optional[int] = None
+    categoria: str | None = None
+    confidence: float | None = None
+    metodo_classificacao: str | None = None
+    regra_aplicada_id: UUID | None = None
+    versao_regra: int | None = None
 
     status: StatusLancamento = StatusLancamento.RASCUNHO
-    nivel_aprovacao: Optional[NivelAprovacao] = None
+    nivel_aprovacao: NivelAprovacao | None = None
     pre_aprovado: bool = False
-    aprovado_por_1: Optional[str] = None
-    aprovado_em_1: Optional[datetime] = None
-    aprovado_por_2: Optional[str] = None
-    aprovado_em_2: Optional[datetime] = None
+    aprovado_por_1: str | None = None
+    aprovado_em_1: datetime | None = None
+    aprovado_por_2: str | None = None
+    aprovado_em_2: datetime | None = None
 
-    guid_gnucash: Optional[str] = None
-    exportado_em: Optional[datetime] = None
+    guid_gnucash: str | None = None
+    exportado_em: datetime | None = None
 
     criado_em: datetime = field(default_factory=_agora)
 
@@ -549,3 +548,166 @@ class Usuario:
 
 # Alias de compatibilidade com parsers herdados da v0.1
 DocumentoFinanceiro = Documento
+
+
+# =============================================================
+# ETAPA 8 — MOTOR DE CONCILIAÇÃO BANCÁRIA
+# =============================================================
+
+class OrigemExtrato(StrEnum):
+    """Origem do extrato bancário importado."""
+    OFX          = "ofx"
+    OPEN_FINANCE = "open_finance"
+    MANUAL       = "manual"
+
+
+class TipoConciliacao(StrEnum):
+    """Status de conciliação de um item do relatório."""
+    CONCILIADO    = "conciliado"
+    DIVERGENTE    = "divergente"
+    AMBIGUO       = "ambiguo"
+    PENDENTE      = "pendente"
+    SEM_DOCUMENTO = "sem_documento"
+    DUPLICADO     = "duplicado"
+
+
+class MetodoMatching(StrEnum):
+    """Método pelo qual o matching foi determinado."""
+    FITID              = "fitid"
+    VALOR_DATA         = "valor_data"
+    VALOR_DATA_DESCRICAO = "valor_data_descricao"
+    SEM_MATCH          = "sem_match"
+
+
+@dataclass
+class ContaBancaria:
+    """Identifica uma conta bancária — escopo do FITID.
+
+    O FITID é único dentro de (instituição, conta), não globalmente.
+    Portanto ContaBancaria é parte da identidade de TransacaoBancaria.
+    """
+    instituicao: str          # ex: "341" (Itaú), "033" (Santander)
+    agencia: str = ""
+    numero_conta: str = ""
+    tipo_conta: str = ""      # "corrente", "poupanca", etc.
+
+    def __str__(self) -> str:
+        return f"{self.instituicao}/{self.agencia}/{self.numero_conta}"
+
+
+@dataclass
+class TransacaoBancaria:
+    """Movimento bancário proveniente de extrato OFX ou Open Finance.
+
+    Identidade natural: (conta_bancaria, fitid) — imutável após importação.
+    Um mesmo FITID para a mesma conta nunca deve gerar dois registros
+    (idempotência da importação, critério de aceite 8.1).
+
+    Não herda de Documento nem de Lancamento — é uma entidade de domínio
+    própria, representando a "visão do banco" de um movimento financeiro.
+    """
+    empresa_id: UUID
+    conta_bancaria: ContaBancaria
+    fitid: str                        # identificador único do banco (FITID/OFX)
+    data: date
+    valor: Dinheiro                   # sempre positivo; natureza indica direção
+    natureza: NaturezaLancamento      # DEBITO ou CREDITO (do ponto de vista da conta)
+    descricao: str = ""               # memo/payee do OFX, já limpo
+    referencia: str = ""              # campo adicional do OFX (checknum, etc.)
+    origem: OrigemExtrato = OrigemExtrato.OFX
+    id_importacao: str = ""           # UUID da importação que criou este registro
+    id: UUID = field(default_factory=uuid4)
+    criado_em: datetime = field(default_factory=_agora)
+
+    def chave_idempotencia(self) -> str:
+        """Chave de idempotência: (instituição, conta, FITID).
+        Dois registros com a mesma chave são duplicatas da mesma transação."""
+        return f"{self.conta_bancaria.instituicao}:{self.conta_bancaria.numero_conta}:{self.fitid}"
+
+
+@dataclass
+class CandidatoMatch:
+    """Um candidato de match encontrado pelo motor de conciliação.
+
+    O motor produz candidatos antes de decidir — isso permite distinguir
+    'sem candidato' (SEM_MATCH) de 'mais de um candidato' (AMBIGUO).
+    """
+    lancamento_id: UUID
+    metodo: MetodoMatching
+    score: float                          # 0.0 a 1.0
+    diferenca_valor: Decimal = Decimal("0")
+    diferenca_dias: int = 0
+    evidencias: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConciliacaoItem:
+    """Resultado da conciliação de uma transação bancária ou lançamento.
+
+    Separação explícita (conforme parecer):
+      - metodo/score: como o match foi determinado
+      - status: resultado da conciliação após aplicar tolerâncias e unicidade
+
+    Tanto lancamento_id quanto transacao_bancaria_id podem ser None:
+      - lancamento_id=None + status=SEM_DOCUMENTO: movimento bancário sem lançamento
+      - transacao_bancaria_id=None + status=PENDENTE: lançamento sem cobertura bancária
+    """
+    id: UUID = field(default_factory=uuid4)
+    lancamento_id: UUID | None = None
+    transacao_bancaria_id: UUID | None = None
+    status: TipoConciliacao = TipoConciliacao.PENDENTE
+    metodo: MetodoMatching = MetodoMatching.SEM_MATCH
+    score: float = 0.0
+    diferenca_valor: Decimal = Decimal("0")
+    diferenca_dias: int = 0
+    candidatos: list[CandidatoMatch] = field(default_factory=list)
+    justificativa: str = ""
+
+
+@dataclass
+class RelatorioConciliacao:
+    """Resultado completo de uma execução do motor de conciliação.
+
+    Agrupa os itens por status para facilitar a geração de relatórios
+    e a identificação de pendências. Cada item é rastreável ao FITID
+    original e ao método de matching aplicado.
+    """
+    empresa_id: UUID
+    periodo_inicio: date
+    periodo_fim: date
+    itens: list[ConciliacaoItem] = field(default_factory=list)
+    executado_em: datetime = field(default_factory=_agora)
+
+    @property
+    def conciliados(self) -> list[ConciliacaoItem]:
+        return [i for i in self.itens if i.status == TipoConciliacao.CONCILIADO]
+
+    @property
+    def divergentes(self) -> list[ConciliacaoItem]:
+        return [i for i in self.itens if i.status == TipoConciliacao.DIVERGENTE]
+
+    @property
+    def ambiguos(self) -> list[ConciliacaoItem]:
+        return [i for i in self.itens if i.status == TipoConciliacao.AMBIGUO]
+
+    @property
+    def pendentes(self) -> list[ConciliacaoItem]:
+        return [i for i in self.itens if i.status == TipoConciliacao.PENDENTE]
+
+    @property
+    def sem_documento(self) -> list[ConciliacaoItem]:
+        return [i for i in self.itens if i.status == TipoConciliacao.SEM_DOCUMENTO]
+
+    @property
+    def duplicados(self) -> list[ConciliacaoItem]:
+        return [i for i in self.itens if i.status == TipoConciliacao.DUPLICADO]
+
+    @property
+    def total_itens(self) -> int:
+        return len(self.itens)
+
+    @property
+    def percentual_conciliado(self) -> float:
+        if not self.itens:
+            return 0.0
+        return round(len(self.conciliados) / len(self.itens) * 100, 2)

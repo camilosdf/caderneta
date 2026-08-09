@@ -10,17 +10,16 @@ Baseado no ADR 002: docs/adr/002-auditoria-hash-chain.md
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 GENESIS_HASH = "0" * 64  # hash do "bloco gênese" — sem evento anterior
 
 
-class TipoEvento(str, Enum):
+class TipoEvento(StrEnum):
     DOCUMENTO_RECEBIDO       = "DOCUMENTO_RECEBIDO"
     DOCUMENTO_DUPLICADO      = "DOCUMENTO_DUPLICADO"
     DOCUMENTO_PROCESSADO     = "DOCUMENTO_PROCESSADO"
@@ -38,6 +37,14 @@ class TipoEvento(str, Enum):
     ERRO_SISTEMA             = "ERRO_SISTEMA"
     USUARIO_LOGIN            = "USUARIO_LOGIN"
     USUARIO_LOGOUT           = "USUARIO_LOGOUT"
+    # Etapa 8 — Motor de Conciliação Bancária
+    CONCILIACAO_INICIADA     = "CONCILIACAO_INICIADA"
+    MATCH_IDENTIFICADO       = "MATCH_IDENTIFICADO"
+    CONCILIACAO_AMBIGUA      = "CONCILIACAO_AMBIGUA"
+    DIVERGENCIA_IDENTIFICADA = "DIVERGENCIA_IDENTIFICADA"
+    CONCILIACAO_APROVADA     = "CONCILIACAO_APROVADA"
+    CONCILIACAO_REJEITADA    = "CONCILIACAO_REJEITADA"
+    EXTRATO_IMPORTADO        = "EXTRATO_IMPORTADO"
 
 
 @dataclass
@@ -52,15 +59,15 @@ class EventoAuditoria:
     hash_proprio: str = ""      # calculado no momento da criação
 
     # Campos opcionais de contexto
-    usuario: Optional[str] = None
-    empresa_id: Optional[str] = None
-    lancamento_id: Optional[str] = None
-    documento_id: Optional[str] = None
-    documento_hash: Optional[str] = None
-    campo_alterado: Optional[str] = None
-    valor_anterior: Optional[str] = None
-    valor_novo: Optional[str] = None
-    versao_regra: Optional[int] = None
+    usuario: str | None = None
+    empresa_id: str | None = None
+    lancamento_id: str | None = None
+    documento_id: str | None = None
+    documento_hash: str | None = None
+    campo_alterado: str | None = None
+    valor_anterior: str | None = None
+    valor_novo: str | None = None
+    versao_regra: int | None = None
 
     def calcular_hash(self) -> str:
         """Calcula SHA-256 determinístico deste evento."""
@@ -109,7 +116,7 @@ class AuditChain:
     """
 
     @property
-    def VERSAO_SISTEMA(self) -> str:  # type: ignore[override]
+    def VERSAO_SISTEMA(self) -> str:  # type: ignore[override]  # noqa: N802
         from core.versao import VERSAO
         return VERSAO.pep440
 
@@ -122,22 +129,22 @@ class AuditChain:
         self,
         tipo: TipoEvento,
         payload: dict[str, Any],
-        usuario: Optional[str] = None,
-        empresa_id: Optional[str] = None,
-        lancamento_id: Optional[str] = None,
-        documento_id: Optional[str] = None,
-        documento_hash: Optional[str] = None,
-        campo_alterado: Optional[str] = None,
-        valor_anterior: Optional[str] = None,
-        valor_novo: Optional[str] = None,
-        versao_regra: Optional[int] = None,
+        usuario: str | None = None,
+        empresa_id: str | None = None,
+        lancamento_id: str | None = None,
+        documento_id: str | None = None,
+        documento_hash: str | None = None,
+        campo_alterado: str | None = None,
+        valor_anterior: str | None = None,
+        valor_novo: str | None = None,
+        versao_regra: int | None = None,
     ) -> EventoAuditoria:
         """Registra um evento e retorna o evento gravado com seu hash."""
 
         evento = EventoAuditoria(
             id=str(uuid.uuid4()),
             tipo=tipo,
-            timestamp=datetime.now(timezone.utc).isoformat() + "Z",
+            timestamp=datetime.now(UTC).isoformat() + "Z",
             versao_sistema=self.VERSAO_SISTEMA,
             payload=payload,
             hash_anterior=self._ultimo_hash,
@@ -213,7 +220,7 @@ class AuditChain:
 
         return len(erros) == 0, erros
 
-    def buscar_por_hash_documento(self, hash_doc: str) -> Optional[dict]:
+    def buscar_por_hash_documento(self, hash_doc: str) -> dict | None:
         """Verifica se um documento já foi processado (deduplicação)."""
         if not self._arquivo.exists():
             return None
@@ -234,7 +241,7 @@ class AuditChain:
         if not self._arquivo.exists():
             return GENESIS_HASH
 
-        ultimo: Optional[str] = None
+        ultimo: str | None = None
         with open(self._arquivo, encoding="utf-8") as f:
             for linha in f:
                 try:
