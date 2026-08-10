@@ -711,3 +711,166 @@ class RelatorioConciliacao:
         if not self.itens:
             return 0.0
         return round(len(self.conciliados) / len(self.itens) * 100, 2)
+
+
+# =============================================================
+# ADR 010 — CARTÃO DE CRÉDITO
+#
+# DT-CC-01: CartaoCredito.conta_codigo é referência textual a uma
+# conta de Passivo (CodigoConta), não uma relação persistida com
+# ContaContabil — que não tem tabela própria no sistema (ver ADR 010,
+# Seção "Débito técnico registrado — DT-CC-01"). Mesmo padrão já
+# usado em Split.conta.
+# =============================================================
+
+class TipoItemFatura(StrEnum):
+    """Tipo de item extraído de uma fatura de cartão (ADR 010, D4/D9/D10)."""
+    COMPRA   = "compra"
+    JUROS    = "juros"
+    MULTA    = "multa"
+    IOF      = "iof"
+    ENCARGO  = "encargo"
+    ANUIDADE = "anuidade"
+    ESTORNO  = "estorno"
+
+
+class StatusFechamentoFatura(StrEnum):
+    """Resultado da invariante de fechamento de uma fatura (ADR 010, D5)."""
+    PENDENTE   = "pendente"
+    FECHADA    = "fechada"
+    DIVERGENTE = "divergente"
+
+
+@dataclass
+class CartaoCredito:
+    """Identidade de um cartão de crédito do titular (ADR 010, D2).
+
+    Identidade natural, usada para idempotência da criação (Deliberação
+    Complementar — Gate de Implementação, B1):
+        (empresa_id, emissor, final_numero, titular)
+
+    final_numero armazena apenas os últimos 4 dígitos — o número
+    completo do cartão nunca deve ser persistido (Seção 24/CLAUDE.md).
+    """
+    id: UUID = field(default_factory=uuid4)
+    empresa_id: UUID = field(default_factory=uuid4)
+    emissor: str = ""
+    final_numero: str = ""
+    titular: str = ""
+    conta_codigo: CodigoConta = field(default_factory=lambda: CodigoConta("2.1"))
+    guid_gnucash: str | None = None
+    ativo: bool = True
+    criado_em: datetime = field(default_factory=_agora)
+
+    def __post_init__(self) -> None:
+        if len(self.final_numero) != 4 or not self.final_numero.isdigit():
+            raise ValueError(
+                f"final_numero deve conter exatamente 4 dígitos "
+                f"(nunca o número completo do cartão), "
+                f"recebido: '{self.final_numero}'"
+            )
+
+    def chave_idempotencia(self) -> str:
+        """Chave de identidade natural (Deliberação Complementar, B1)."""
+        return f"{self.empresa_id}:{self.emissor}:{self.final_numero}:{self.titular}"
+
+
+@dataclass
+class CompraCartao:
+    """Um item (linha) de uma fatura de cartão (ADR 010, D4).
+
+    tipo distingue compra de encargos financeiros (juros/multa/IOF/
+    encargo — D9/D10) e de anuidade/estorno. O metadado de parcelamento
+    é puramente informativo (D12, Alternativa C) — nunca gera lançamento
+    mensal adicional; o valor lançado é sempre o total da compra.
+    """
+    id: UUID = field(default_factory=uuid4)
+    empresa_id: UUID = field(default_factory=uuid4)
+    fatura_id: UUID | None = None
+    lancamento_id: UUID | None = None
+
+    tipo: TipoItemFatura = TipoItemFatura.COMPRA
+    estabelecimento: str | None = None
+    descricao_original: str | None = None
+    data_compra: date | None = None
+    valor: Dinheiro = field(default_factory=lambda: Dinheiro(Decimal("0")))
+
+    # Metadado informativo apenas (D12) — não gera lançamento por parcela.
+    parcela_atual: int | None = None
+    total_parcelas: int | None = None
+
+    posicao_linha: int = 0
+    hash_linha: str | None = None
+
+    confidence: ConfidenceScore | None = None
+    criado_em: datetime = field(default_factory=_agora)
+
+    @property
+    def e_estorno(self) -> bool:
+        """Estornos/créditos reduzem o total da fatura (D11)."""
+        return self.tipo == TipoItemFatura.ESTORNO
+
+
+@dataclass
+class FaturaCartao:
+    """Agregado raiz de um ciclo de faturamento de um cartão (ADR 010, D3).
+
+    Invariante de fechamento (D5, corrigida — ver ADR 010):
+        itens + encargos - créditos/estornos = total declarado
+    Tolerância agregada de R$0,05 (Deliberação Complementar, B2).
+
+    Divergência acima da tolerância NÃO levanta exceção — marca a
+    fatura como DIVERGENTE para revisão humana, seguindo o princípio
+    de regra determinística com fallback de revisão, não bloqueio
+    duro (Seção 12/CLAUDE.md). Fatura sem nenhum item é erro de uso
+    (não é um caso de divergência a revisar, é um agregado incompleto).
+    """
+    id: UUID = field(default_factory=uuid4)
+    empresa_id: UUID = field(default_factory=uuid4)
+    cartao_id: UUID | None = None
+    documento_id: UUID | None = None
+
+    periodo_referencia: date | None = None
+    data_fechamento: date | None = None
+    data_vencimento: date | None = None
+    valor_total_declarado: Dinheiro = field(default_factory=lambda: Dinheiro(Decimal("0")))
+
+    itens: list[CompraCartao] = field(default_factory=list)
+    status_fechamento: StatusFechamentoFatura = StatusFechamentoFatura.PENDENTE
+
+    criado_em: datetime = field(default_factory=_agora)
+
+    _TOLERANCIA_FECHAMENTO: Decimal = field(
+        default=Decimal("0.05"), init=False, repr=False, compare=False
+    )
+
+    def chave_idempotencia(self) -> str:
+        """Chave de identidade natural (ADR 010, D13): (cartão, período)."""
+        return f"{self.cartao_id}:{self.periodo_referencia}"
+
+    def validar_fechamento(self) -> None:
+        """Verifica a invariante de fechamento (D5) e atualiza status_fechamento.
+
+        Não bloqueia em caso de divergência — apenas classifica. A decisão
+        de impedir a geração de lançamentos a partir de uma fatura
+        DIVERGENTE é responsabilidade da camada de aplicação, não desta
+        entidade.
+        """
+        if not self.itens:
+            raise ValueError("Fatura sem itens não pode ser fechada.")
+
+        soma_creditos = sum(
+            (item.valor.valor for item in self.itens if item.e_estorno),
+            Decimal("0"),
+        )
+        soma_demais = sum(
+            (item.valor.valor for item in self.itens if not item.e_estorno),
+            Decimal("0"),
+        )
+        total_calculado = soma_demais - soma_creditos
+        diferenca = abs(total_calculado - self.valor_total_declarado.valor)
+
+        if diferenca <= self._TOLERANCIA_FECHAMENTO:
+            self.status_fechamento = StatusFechamentoFatura.FECHADA
+        else:
+            self.status_fechamento = StatusFechamentoFatura.DIVERGENTE
