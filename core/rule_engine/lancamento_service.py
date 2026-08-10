@@ -20,9 +20,12 @@ from uuid import UUID
 
 from core.domain.entities import (
     CentroCusto,
+    CodigoConta,
+    CompraCartao,
     ContaContabil,
     Dinheiro,
     Documento,
+    FaturaCartao,
     Lancamento,
     NaturezaLancamento,
     NivelAprovacao,
@@ -206,4 +209,121 @@ class LancamentoService:
         lancamento = self.construir(documento, sugestao)
         if lancamento.splits:
             self.validar(lancamento)
+        return lancamento
+
+    # ── ADR 010 — Cartão de Crédito (Fase 3: D7, D8) ───────────────────────
+    #
+    # Métodos dedicados, deliberadamente separados de construir()/
+    # _gerar_splits() (que operam sobre Documento+Sugestao — um par de
+    # splits por documento). CompraCartao e FaturaCartao representam dois
+    # fatos contábeis distintos (aquisição vs. liquidação do passivo) que
+    # NÃO podem ser encaixados no mesmo caminho sem violar D7/D8 — ver
+    # Gate de Fase 3, "não aceitar implementação que simplesmente encaixe
+    # cartão no comportamento atual de _gerar_splits".
+    #
+    # Nenhuma conta é decidida aqui — mesmo princípio já documentado para
+    # Sugestao ("Este serviço não decide categoria/conta"). conta_despesa,
+    # conta_cartao e conta_banco são sempre fornecidos pelo chamador.
+
+    def construir_lancamento_compra_cartao(
+        self,
+        compra: CompraCartao,
+        conta_despesa: CodigoConta,
+        conta_cartao: CodigoConta,
+    ) -> Lancamento:
+        """D7 — Lançamento de aquisição de um item de fatura de cartão.
+
+        Compra/juros/multa/IOF/encargo/anuidade (D9, D10):
+            D — conta_despesa (financeira ou operacional, conforme o
+                tipo já classificado em CompraCartao.tipo — Fase 2)
+            C — conta_cartao (Passivo do cartão)
+
+        Estorno (D11 — inversão, não incorporação):
+            D — conta_cartao (reduz o passivo)
+            C — conta_despesa
+
+        Um lançamento por CompraCartao — nunca agregado com outros
+        itens da mesma fatura. O valor lançado é sempre compra.valor
+        (o total da compra, mesmo quando parcelada — D12).
+        """
+        if compra.e_estorno:
+            conta_debito, conta_credito = conta_cartao, conta_despesa
+        else:
+            conta_debito, conta_credito = conta_despesa, conta_cartao
+
+        splits = [
+            Split(
+                conta=conta_debito,
+                natureza=NaturezaLancamento.DEBITO,
+                valor=compra.valor,
+            ),
+            Split(
+                conta=conta_credito,
+                natureza=NaturezaLancamento.CREDITO,
+                valor=compra.valor,
+            ),
+        ]
+
+        lancamento = Lancamento(
+            empresa_id=compra.empresa_id,
+            data_lancamento=compra.data_compra,
+            data_competencia=compra.data_compra,
+            descricao=(
+                compra.estabelecimento
+                or compra.descricao_original
+                or compra.tipo.value
+            ),
+            splits=splits,
+            # D12 — metadado informativo apenas; nenhum lançamento
+            # mensal adicional é gerado a partir dele.
+            e_parcelado=bool(compra.parcela_atual and compra.total_parcelas),
+            parcela_atual=compra.parcela_atual,
+            total_parcelas=compra.total_parcelas,
+            categoria=compra.tipo.value,
+            confidence=compra.confidence.valor if compra.confidence else None,
+            status=StatusLancamento.PENDENTE,
+            nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
+        )
+        lancamento.validar()  # equilíbrio D=C
+        return lancamento
+
+    def construir_lancamento_pagamento_fatura(
+        self,
+        fatura: FaturaCartao,
+        conta_cartao: CodigoConta,
+        conta_banco: CodigoConta,
+    ) -> Lancamento:
+        """D8 — Lançamento de liquidação (pagamento) de uma fatura de cartão.
+
+            D — conta_cartao (baixa do Passivo)
+            C — conta_banco (saída do Ativo)
+
+        Um ÚNICO lançamento agregado por fatura, no valor total
+        declarado (fatura.valor_total_declarado) — nunca um lançamento
+        por CompraCartao. Este método não itera fatura.itens; não
+        existe caminho neste serviço que transforme compras individuais
+        em lançamentos de pagamento (ver teste negativo dedicado).
+        """
+        splits = [
+            Split(
+                conta=conta_cartao,
+                natureza=NaturezaLancamento.DEBITO,
+                valor=fatura.valor_total_declarado,
+            ),
+            Split(
+                conta=conta_banco,
+                natureza=NaturezaLancamento.CREDITO,
+                valor=fatura.valor_total_declarado,
+            ),
+        ]
+
+        lancamento = Lancamento(
+            empresa_id=fatura.empresa_id,
+            data_lancamento=fatura.data_vencimento,
+            descricao=f"Pagamento fatura cartão — período {fatura.periodo_referencia}",
+            splits=splits,
+            status=StatusLancamento.PENDENTE,
+            nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
+        )
+        lancamento.validar()  # equilíbrio D=C
         return lancamento
