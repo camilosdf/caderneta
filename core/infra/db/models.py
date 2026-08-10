@@ -11,6 +11,9 @@ Tabelas:
     lancamentos      → Lancamento
     splits           → Split (filhos de Lancamento)
     audit_eventos    → EventoAuditoria (append-only, hash chain)
+    cartoes_credito  → CartaoCredito (ADR 010)
+    faturas_cartao   → FaturaCartao (ADR 010, filhos de CartaoCredito)
+    compras_cartao   → CompraCartao (ADR 010, filhos de FaturaCartao)
 """
 
 from datetime import date, datetime
@@ -329,3 +332,146 @@ class TransacaoBancariaORM(Base):
 
     def __repr__(self) -> str:
         return f"<TransacaoBancariaORM {self.fitid} {self.data} {self.valor}>"
+
+
+# ---------------------------------------------------------------------------
+# ADR 010 — Faturas de Cartão de Crédito (Fase 0 — schema)
+#
+# DT-CC-01: ContaContabil não tem persistência própria no sistema (nenhuma
+# tabela contas_contabeis, nenhum ContaContabilORM). CartaoCreditoORM segue
+# o mesmo padrão já usado em SplitORM.conta_codigo — referência textual,
+# sem FK — em vez de uma relação persistida com ContaContabil. Ver ADR 010,
+# Seção "Débito técnico registrado — DT-CC-01".
+# ---------------------------------------------------------------------------
+
+
+class CartaoCreditoORM(Base):
+    """Persiste CartaoCredito — identidade de um cartão de crédito do titular.
+
+    Unicidade garantida por (empresa_id, emissor, final_numero, titular) —
+    chave natural de idempotência (Deliberação Complementar, B1).
+    """
+
+    __tablename__ = "cartoes_credito"
+    __table_args__ = (
+        UniqueConstraint(
+            "empresa_id", "emissor", "final_numero", "titular",
+            name="uq_cartao_credito_identidade",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    emissor: Mapped[str] = mapped_column(String(50), nullable=False)
+    final_numero: Mapped[str] = mapped_column(String(4), nullable=False)
+    titular: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # DT-CC-01 — referência textual, sem FK (ver nota de módulo acima)
+    conta_codigo: Mapped[str] = mapped_column(String(20), nullable=False)
+    guid_gnucash: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    faturas: Mapped[list["FaturaCartaoORM"]] = relationship(
+        "FaturaCartaoORM", back_populates="cartao"
+    )
+
+    def __repr__(self) -> str:
+        return f"<CartaoCreditoORM {self.emissor} ****{self.final_numero}>"
+
+
+class FaturaCartaoORM(Base):
+    """Persiste FaturaCartao — um ciclo de faturamento de um cartão.
+
+    Unicidade garantida por (cartao_id, periodo_referencia) — chave natural
+    de idempotência ao nível de fatura (ADR 010, D13).
+    """
+
+    __tablename__ = "faturas_cartao"
+    __table_args__ = (
+        UniqueConstraint(
+            "cartao_id", "periodo_referencia",
+            name="uq_fatura_cartao_periodo",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    cartao_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("cartoes_credito.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    documento_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("documentos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    periodo_referencia: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    data_fechamento: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_vencimento: Mapped[date | None] = mapped_column(Date, nullable=True)
+    valor_total_declarado: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+
+    # pendente | fechada | divergente — resultado da invariante de
+    # fechamento definida em D5 (itens + encargos - créditos = total)
+    status_fechamento: Mapped[str] = mapped_column(String(20), nullable=False, default="pendente")
+
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    cartao: Mapped["CartaoCreditoORM"] = relationship(
+        "CartaoCreditoORM", back_populates="faturas"
+    )
+    itens: Mapped[list["CompraCartaoORM"]] = relationship(
+        "CompraCartaoORM", back_populates="fatura", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<FaturaCartaoORM cartao_id={self.cartao_id} periodo={self.periodo_referencia}>"
+
+
+class CompraCartaoORM(Base):
+    """Persiste CompraCartao — um item (linha) de uma fatura de cartão.
+
+    tipo distingue compra/juros/multa/iof/encargo/anuidade/estorno
+    (ADR 010, D4/D9/D10). Unicidade por (fatura_id, posicao_linha) —
+    chave natural de idempotência ao nível de item (ADR 010, D13).
+    """
+
+    __tablename__ = "compras_cartao"
+    __table_args__ = (
+        UniqueConstraint(
+            "fatura_id", "posicao_linha",
+            name="uq_compra_cartao_posicao",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    fatura_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("faturas_cartao.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    lancamento_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("lancamentos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False, default="compra")
+    estabelecimento: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    descricao_original: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    data_compra: Mapped[date | None] = mapped_column(Date, nullable=True)
+    valor: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+
+    # Metadado informativo de parcelamento (D12 — Alternativa C).
+    # Não gera lançamento mensal adicional; ver core/domain/entities.py
+    # Lancamento.e_parcelado/parcela_atual/total_parcelas (mesmo padrão).
+    parcela_atual: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_parcelas: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    posicao_linha: Mapped[int] = mapped_column(Integer, nullable=False)
+    hash_linha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    fatura: Mapped["FaturaCartaoORM"] = relationship(
+        "FaturaCartaoORM", back_populates="itens"
+    )
+
+    def __repr__(self) -> str:
+        return f"<CompraCartaoORM tipo={self.tipo} valor={self.valor}>"
