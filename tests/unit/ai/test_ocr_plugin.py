@@ -146,6 +146,33 @@ class TestExtrairDeArquivo:
         plugin = OCRPlugin()  # sem mock — spike real criado mas não inicializado
         assert plugin._spike._ocr is None  # lazy — não carregado ainda
 
+    def test_extrair_de_arquivo_usa_confianca_real_por_linha(self) -> None:
+        """Correção autorizada: confiança real do PaddleOCR por linha,
+        não mais uma constante fixa (0.85)."""
+        linha_cnpj = "CNPJ: 12.345.678/0001-90"
+        mock = MagicMock()
+        mock.processar_documento.return_value = ResultadoOCR(
+            arquivo="teste.pdf",
+            texto_extraído=linha_cnpj,
+            tempo_ms=1.0,
+            confiança_media=0.60,
+            linhas=[{"texto": linha_cnpj, "confiança": 0.42, "bbox": []}],
+        )
+        plugin = OCRPlugin(spike=mock)
+        campos = plugin.extrair_de_arquivo(Path("teste.pdf"))
+
+        assert campos["cnpj_emitente"][1] == pytest.approx(0.42)
+        assert campos["cnpj_emitente"][1] != 0.85
+
+    def test_extrair_de_arquivo_usa_fallback_quando_linha_sem_confianca_propria(self) -> None:
+        """Sem correspondência em ResultadoOCR.linhas (ex.: texto sintético),
+        usa confiança_media como fallback — nunca inventa um valor."""
+        spike = _spike_mock(texto="VALOR TOTAL R$ 50,00", confianca=0.77)
+        plugin = OCRPlugin(spike=spike)
+        campos = plugin.extrair_de_arquivo(Path("teste.pdf"))
+
+        assert campos["valor_total"][1] == pytest.approx(0.77)
+
 
 # =============================================================
 # UTILITÁRIOS
