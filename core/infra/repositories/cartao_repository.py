@@ -130,6 +130,22 @@ class FaturaCartaoRepository:
         )
         return [_fatura_para_dominio(orm) for orm in self._session.execute(stmt).scalars()]
 
+    def atualizar_lancamento_ids_dos_itens(self, fatura: FaturaCartao) -> None:
+        """Atualiza compras_cartao.lancamento_id para os itens da fatura
+        (ADR 010, Fase 6, B6-0).
+
+        Não recria itens nem altera outros campos — apenas grava
+        lancamento_id nas linhas já existentes, casadas por
+        CompraCartao.id. Itens com lancamento_id=None no objeto em
+        memória são ignorados (não zera um valor já persistido).
+        """
+        for item in fatura.itens:
+            if item.lancamento_id is None:
+                continue
+            orm_item = self._session.get(CompraCartaoORM, str(item.id))
+            if orm_item is not None:
+                orm_item.lancamento_id = str(item.lancamento_id)
+
     def _buscar_orm_por_chave(
         self, cartao_id: str, periodo_referencia: date | None
     ) -> FaturaCartaoORM | None:

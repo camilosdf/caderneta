@@ -219,6 +219,45 @@ outra fase.
 
 ---
 
+## Decisão arquitetural registrada — Identidade do lançamento de pagamento (B6-0, Fase 6)
+
+**O lançamento de pagamento de uma `FaturaCartao` utiliza identidade
+UUID determinística derivada da identidade da fatura; não existe coluna
+`lancamento_pagamento_id` em `faturas_cartao` nem em `FaturaCartaoORM`.**
+
+Esta é uma decisão arquitetural formal, não um detalhe de implementação
+— registrada aqui para que uma equipe futura não interprete a ausência
+da coluna como esquecimento.
+
+**Mecanismo (`core/application/use_cases/gerar_lancamentos_fatura_cartao.py`):**
+
+```text
+namespace_fixo = UUIDv5(NAMESPACE_URL, "caderneta:adr010:pagamento-fatura-cartao")
+id_do_lancamento_de_pagamento = UUIDv5(namespace_fixo, str(fatura.id))
+```
+
+`fatura.id` nunca é usado como namespace — sempre como `name`, dentro de
+um namespace fixo e específico ao conceito "pagamento de fatura de
+cartão". Isso garante que o id seja: determinístico; estável entre
+execuções; independente da instância do use case que o calcula;
+específico do conceito (resistente a colisão semântica com outros usos
+futuros de UUIDv5 no sistema).
+
+**Consequência para B6-1 (e futuras fases):** localizar o lançamento de
+pagamento de uma fatura **deve** usar essa identidade determinística
+(`uuid5` a partir de `fatura.id`), nunca heurística por
+`categoria`/`valor`/`data`. Buscar por heurística reintroduziria
+exatamente o tipo de ambiguidade que a Fase 6 existe para eliminar.
+
+**Por que não uma coluna nova:** evita migration adicional dentro do
+escopo já fechado de B6-0 (sem alteração em `Lancamento`/`FaturaCartao`/
+ORM). Se no futuro a Direção preferir um campo explícito e legível
+diretamente no banco (`lancamento_pagamento_id`), é uma migration
+pequena e isolada — a mudança de estratégia não afeta nenhuma outra
+parte do desenho já aprovado.
+
+---
+
 ## 3.4 — Fatura (ciclo proposto)
 
 ```text
