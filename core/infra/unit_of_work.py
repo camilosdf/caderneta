@@ -17,6 +17,10 @@ from typing import Optional
 
 from core.infra.db.session import SessionFactory
 from core.infra.repositories.audit_repository import AuditRepository
+from core.infra.repositories.cartao_repository import (
+    CartaoCreditoRepository,
+    FaturaCartaoRepository,
+)
 from core.infra.repositories.centro_custo_repository import CentroCustoRepository
 from core.infra.repositories.documento_repository import DocumentoRepository
 from core.infra.repositories.lancamento_repository import LancamentoRepository
@@ -46,6 +50,8 @@ class UnitOfWork:
         self.centros_custo: Optional[CentroCustoRepository] = None
         self.usuarios: Optional[UsuarioRepository] = None
         self.transacoes_bancarias: Optional[TransacaoBancariaRepository] = None
+        self.cartoes_credito: Optional[CartaoCreditoRepository] = None
+        self.faturas_cartao: Optional[FaturaCartaoRepository] = None
 
     def __enter__(self) -> "UnitOfWork":
         self._session = self._session_factory._session_factory()
@@ -58,6 +64,8 @@ class UnitOfWork:
         self.centros_custo = CentroCustoRepository(self._session)
         self.usuarios = UsuarioRepository(self._session)
         self.transacoes_bancarias = TransacaoBancariaRepository(self._session)
+        self.cartoes_credito = CartaoCreditoRepository(self._session)
+        self.faturas_cartao = FaturaCartaoRepository(self._session)
 
         return self
 
@@ -82,6 +90,8 @@ class UnitOfWork:
             self.centros_custo = None
             self.usuarios = None
             self.transacoes_bancarias = None
+            self.cartoes_credito = None
+            self.faturas_cartao = None
 
     def commit(self) -> None:
         """Confirma todas as operações realizadas nos repositórios desta UoW."""

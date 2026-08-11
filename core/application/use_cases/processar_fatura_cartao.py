@@ -1,4 +1,4 @@
-"""Use case: ProcessarFaturaCartao — ADR 010, Fase 2.
+"""Use case: ProcessarFaturaCartao — ADR 010, Fases 2 e 4.
 
 Fluxo dedicado à fatura de cartão de crédito, decorrente da Opção B do
 Gate pré-Fase 2: `FaturaCartao` (D1) não cabe em `ParserProtocol ->
@@ -16,10 +16,22 @@ Reaproveita, sem duplicar:
   - FaturaCartao.validar_fechamento(): invariante de fechamento já
     implementada no domínio (Fase 1, D5).
 
-Escopo desta etapa (Fase 2): extração estruturada + montagem do
-agregado em memória. NÃO persiste (repositório fica para quando for
-necessário), NÃO gera lançamento (LancamentoService é Fase 3), NÃO
-publica eventos de auditoria (catálogo de eventos é Fase 4).
+Fase 2: extração estruturada + montagem do agregado em memória.
+Fase 4 (session_factory/event_bus opcionais, injetados):
+  - Idempotência D13 via FaturaCartaoRepository.salvar_se_nova
+    (chave: cartão + período) — fatura duplicada não é reprocessada.
+  - Publica FaturaCartaoRecebida (sempre que a fatura é nova) e
+    FaturaCartaoFechada (quando D5 resulta em FECHADA), nos dois
+    catálogos (EventBusPort + TipoEvento/hash chain).
+  - NÃO gera lançamento (LancamentoService é Fase 3, já implementada
+    separadamente). NÃO dispara PagamentoCartaoIdentificado — esse
+    evento está catalogado, mas seu disparo pertence à conciliação
+    (fora do escopo desta fase).
+
+Sem session_factory/event_bus injetados, o use case funciona
+exatamente como na Fase 2 — extração pura em memória, sem persistir
+nem publicar nada. Isso preserva os testes e o comportamento já
+existentes sem alteração.
 """
 
 from dataclasses import dataclass, field
@@ -28,6 +40,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from core.audit.chain import TipoEvento
 from core.domain.entities import (
     CompraCartao,
     ConfidenceScore,
@@ -38,6 +51,9 @@ from core.domain.entities import (
     StatusFechamentoFatura,
     TipoDocumento,
 )
+from core.events.catalog import EventBusPort, FaturaCartaoFechada, FaturaCartaoRecebida
+from core.infra.db.session import SessionFactory
+from core.infra.unit_of_work import UnitOfWork
 from core.parsers.detector import DetectorDocumento, TipoNaoSuportadoError
 from core.parsers.pdf.fatura_cartao_nubank import parsear_fatura_texto
 
@@ -75,6 +91,7 @@ class ResultadoProcessamentoFatura:
     fatura: FaturaCartao
     itens_baixa_confianca: list[CompraCartao] = field(default_factory=list)
     avisos: list[str] = field(default_factory=list)
+    duplicada: bool = False
 
 
 class ProcessarFaturaCartaoUseCase:
@@ -89,15 +106,20 @@ class ProcessarFaturaCartaoUseCase:
         self,
         detector: DetectorDocumento | None = None,
         ocr_plugin: ExtratorDeArquivoPort | None = None,
+        session_factory: SessionFactory | None = None,
+        event_bus: EventBusPort | None = None,
     ) -> None:
         self._detector = detector or DetectorDocumento()
         self._ocr_plugin = ocr_plugin
+        self._session_factory = session_factory
+        self._event_bus = event_bus
 
     def executar(
         self,
         filepath: Path,
         empresa_id: UUID,
         cartao_id: UUID | None = None,
+        usuario: str = "sistema",
     ) -> ResultadoProcessamentoFatura:
         tipo = self._detector.detectar(filepath)
         if tipo not in (TipoDocumento.PDF_TEXTO, TipoDocumento.PDF_IMAGEM):
@@ -185,11 +207,92 @@ class ProcessarFaturaCartaoUseCase:
                 f"= 0.90) — requerem revisão manual antes de gerar lançamento."
             )
 
+        duplicada = False
+
+        if self._session_factory is not None:
+            with UnitOfWork(self._session_factory) as uow:
+                # Documento: idempotência por (empresa_id, hash_sha256) —
+                # mesmo padrão já usado em ProcessarDocumentoUseCase.
+                # DocumentoRepository.salvar() faz upsert por id, não por
+                # hash — sem esta checagem, reprocessar o mesmo arquivo
+                # violaria uq_documento_hash_empresa.
+                documento_existente = uow.documentos.buscar_por_hash(hash_doc, empresa_id)
+                if documento_existente is not None:
+                    documento.id = documento_existente.id
+                    fatura.documento_id = documento.id
+                else:
+                    uow.documentos.salvar(documento)
+
+                fatura_nova = uow.faturas_cartao.salvar_se_nova(fatura)
+                duplicada = not fatura_nova
+
+                if duplicada:
+                    avisos.append(
+                        "Fatura já processada anteriormente (mesmo cartão e "
+                        "período) — ignorada (idempotência D13)."
+                    )
+                else:
+                    uow.audit.registrar(
+                        tipo=TipoEvento.FATURA_CARTAO_RECEBIDA,
+                        payload={
+                            "fatura_id": str(fatura.id),
+                            "cartao_id": str(cartao_id) if cartao_id else "",
+                            "periodo_referencia": str(fatura.periodo_referencia),
+                            "valor_total_declarado": str(
+                                fatura.valor_total_declarado.valor
+                            ),
+                            "n_itens": len(fatura.itens),
+                        },
+                        usuario=usuario,
+                        empresa_id=str(empresa_id),
+                        documento_id=str(documento.id),
+                        documento_hash=hash_doc,
+                    )
+                    if fatura.status_fechamento == StatusFechamentoFatura.FECHADA:
+                        uow.audit.registrar(
+                            tipo=TipoEvento.FATURA_CARTAO_FECHADA,
+                            payload={
+                                "fatura_id": str(fatura.id),
+                                "status_fechamento": fatura.status_fechamento.value,
+                                "valor_total_declarado": str(
+                                    fatura.valor_total_declarado.valor
+                                ),
+                            },
+                            usuario=usuario,
+                            empresa_id=str(empresa_id),
+                            documento_id=str(documento.id),
+                            documento_hash=hash_doc,
+                        )
+
+                uow.commit()
+
+        if not duplicada and self._event_bus is not None:
+            self._event_bus.publicar(FaturaCartaoRecebida(
+                documento_id=str(documento.id),
+                fatura_id=str(fatura.id),
+                cartao_id=str(cartao_id) if cartao_id else "",
+                hash_sha256=hash_doc,
+                tipo_documento=tipo.value,
+                periodo_referencia=str(fatura.periodo_referencia),
+                valor_total_declarado=str(fatura.valor_total_declarado.valor),
+                n_itens=len(fatura.itens),
+                n_itens_baixa_confianca=len(itens_baixa_confianca),
+            ))
+            if fatura.status_fechamento == StatusFechamentoFatura.FECHADA:
+                soma = sum((item.valor.valor for item in fatura.itens), Decimal("0"))
+                self._event_bus.publicar(FaturaCartaoFechada(
+                    fatura_id=str(fatura.id),
+                    status_fechamento=fatura.status_fechamento.value,
+                    valor_total_declarado=str(fatura.valor_total_declarado.valor),
+                    soma_itens_calculada=str(soma),
+                ))
+
         return ResultadoProcessamentoFatura(
             documento=documento,
             fatura=fatura,
             itens_baixa_confianca=itens_baixa_confianca,
             avisos=avisos,
+            duplicada=duplicada,
         )
 
     def _extrair_texto_pdfplumber(self, filepath: Path) -> str:
