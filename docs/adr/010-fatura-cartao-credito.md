@@ -1,6 +1,6 @@
 # ADR 010 — Faturas de Cartão de Crédito
 
-**Status:** Aprovado e congelável documentalmente — 18/18 decisões deliberadas, com 5 correções de consistência textual aplicadas nesta revisão final. Implementação ainda não autorizada — depende de autorização explícita separada.
+**Status:** Aprovado e congelado documentalmente. Implementação em andamento — Fases 0 a 5 concluídas (schema, domínio, PDF/OCR, contabilidade D7/D8, idempotência/eventos/CLI, correção do FITID via B4-B). Fase 6 (Conciliação) aguardando gate de inspeção/autorização.
 **Numeração:** originalmente redigido sob o número ADR 009; corrigido para **ADR 010** por colisão identificada — `ADR 009` permanece reservado para o registro de Open Finance como escopo pós-`v1.0.0` (`docs/caderneta_matriz_prontidao_v0999.docx`, Sequência Recomendada para v0.999, item 4). O ADR 009 de Open Finance não foi alterado nem renumerado.
 **Data:** 2026-08
 **Decisores:** Direção do projeto (deliberação arquitetural e contábil registrada nesta consolidação, com parecer contábil específico para D9/D10/D12 — ver Seção "Requisito externo/CRC")
@@ -184,6 +184,41 @@ colateral.
 
 ---
 
+## Débito técnico registrado — DT-CC-02
+
+**Perda de `confidence` no round-trip de `CompraCartao`.** A migration da
+Fase 0 (`3c164a335ab2_adr010_cartao_credito_schema.py`) criou
+`compras_cartao` sem coluna para `confidence` — campo que existe na
+entidade de domínio `CompraCartao` (`ConfidenceScore`, Fase 1/2) e que é
+central para a regra de revisão humana (D9/D10 dependem dele para decidir
+o que cai abaixo do limiar `ConfidenceScore.e_confiavel`). O gap foi
+descoberto na Fase 4: `CartaoCreditoRepository`/`FaturaCartaoRepository`
+persistem e recuperam `CompraCartao`, mas `_item_para_dominio` retorna
+sempre `confidence=None` — o valor calculado na extração (Fase 2) não
+sobrevive a um ciclo salvar→reler.
+
+**Impacto:** qualquer fluxo que reler uma `CompraCartao` já persistida
+(em vez de trabalhar com o objeto recém-extraído em memória, como os
+testes de Fase 2/4 fazem) perde a informação de confiança — a extração
+volta a parecer "certa" mesmo tendo sido classificada abaixo do limiar.
+Isso é particularmente sensível dado que B3 (classificação de tipo de
+item) já está registrado como não validado contra fatura real, com a
+confiança sub-threshold como única salvaguarda contra lançamento
+automático incorreto — perder essa informação no reload esvazia essa
+salvaguarda para qualquer consumidor que dependa da persistência.
+
+**Correção:** exige nova coluna em `compras_cartao` (`confidence` ou
+campo equivalente) — portanto **nova migration**, fora do escopo já
+concluído da Fase 0/4. Fica registrada como pré-requisito a resolver
+antes de qualquer fluxo de produção que dependa de reler `CompraCartao`
+do banco para decidir revisão humana (ainda não é o caso — Fases 2/4
+operam com o objeto em memória, recém-extraído, onde `confidence` está
+presente). Mesma classe de tratamento de DT-CC-01/D14: descoberto durante
+o trabalho de cartão, registrado, não resolvido como efeito colateral de
+outra fase.
+
+---
+
 ## 3.4 — Fatura (ciclo proposto)
 
 ```text
@@ -293,7 +328,10 @@ correção do FITID é necessária, mas não precisa bloquear o início da
 feature de cartão como um todo — apenas a sua etapa final de conciliação
 de pagamento, que é justamente onde o FITID seria usado.
 
-> **D14 — FITID: DELIBERADO — APROVADA (Alternativa B).** Correção obrigatória como pré-requisito de saída da etapa de conciliação do pagamento, com commit e teste próprios e identificáveis; não incorporável silenciosamente a outra funcionalidade.
+> **D14 — FITID: DELIBERADO — APROVADA (Alternativa B) — CORRIGIDO na Fase 5.**
+> Mecanismo técnico escolhido na Etapa 5.0 (Gate B4): **B4-B** — `MotorConciliacao.conciliar()` recebe um mapa opcional `fitids_por_lancamento` (lancamento_id → FITID), resolvido pelo chamador (`core/cli.py::conciliacao_executar`) via `Lancamento.documento_id → Documento.numero_documento`. Sem alteração em `Lancamento`, sem migration, motor permanece sem I/O. Commit e testes próprios, independentes da feature de cartão (`tests/unit/core/conciliacao/test_fitid_fase5.py`), conforme exigido.
+>
+> **Achado da Etapa 5.0, registrado formalmente:** corrigir D14 **não** habilita FITID (Camada 1) para os lançamentos de pagamento de fatura de cartão (D8). Esses lançamentos nascem de `FaturaCartao`, não de um `Documento` OFX — nunca têm `documento_id` preenchido, portanto nunca entram no mapa `fitids_por_lancamento` e nunca ativam a Camada 1. Para o pagamento de cartão, **D15 permanece a decisão vigente e inalterada**: conciliação via Camada 2 (valor + data). Confirmado por teste negativo dedicado.
 
 ---
 
@@ -463,7 +501,7 @@ contábeis).
 | D11 | Créditos/estornos reaproveitam `estorno.py`; ajustes pós-fechamento fora de escopo | **APROVADA** |
 | D12 | Competência de parcelas — reconhecimento integral na aquisição, parcelamento como metadado (Alternativa C); Alternativa B rejeitada | **APROVADA** |
 | D13 | Idempotência — chaves por nível | **APROVADA** |
-| D14 | FITID — débito técnico pré-existente, correção como pré-requisito de saída da etapa de conciliação (Alternativa B) | **APROVADA** |
+| D14 | FITID — débito técnico pré-existente, corrigido via B4-B (Fase 5); pagamento de cartão permanece na Camada 2, não afetado | **APROVADA — CORRIGIDA** |
 | D15 | Conciliação — 1:1 pagamento↔transação, sem mecanismo N:1 | **APROVADA** |
 | D16 | Existência de no mínimo três eventos específicos para recebimento/classificação da fatura e identificação do pagamento | **APROVADA** (identificadores/nomenclatura final e payloads ainda não definidos) |
 | D17 | Convenção de CLI, nomes definitivos a fechar em revisão de código | **APROVADA** |
@@ -485,7 +523,7 @@ detalhe ainda em aberto.
 5. Registro em `ParserFactory` + identificação de emissor.
 6. Extensão do `LancamentoService` para os dois lançamentos (compra/pagamento).
 7. Integração dos metadados de parcelamento (`e_parcelado`, `parcela_atual`, `total_parcelas`) no lançamento da compra, sem geração de lançamentos contábeis mensais adicionais (D12).
-8. Correção do bug de FITID — pré-requisito de saída da etapa de conciliação do pagamento (item 12 abaixo), com commit e teste próprios (D14).
+8. ~~Correção do bug de FITID~~ — **concluída na Fase 5** (B4-B, D14).
 9. Novos eventos de auditoria.
 10. CLI.
 11. Suíte de testes completa + regressão total do projeto.
@@ -615,14 +653,16 @@ implementado (Transação Bancária) (D13).
 `ProcessarDocumentoUseCase` (hoje restrito a hash de arquivo inteiro).
 
 ### 11. FITID
-**DECISÃO APROVADA:** classificado como débito técnico pré-existente;
-Alternativa B — correção obrigatória como pré-requisito de saída da etapa
-de conciliação do pagamento do cartão, com commit e teste próprios e
-identificáveis, não incorporável silenciosamente a outra funcionalidade
-(D14).
-**AINDA NÃO DEFINIDO:** mecanismo exato de propagação do FITID de
-`Documento` para `Lancamento` (novo campo em `Lancamento` vs. lookup via
-`documento_id` no momento da conciliação).
+**DECISÃO APROVADA E IMPLEMENTADA (Fase 5):** débito técnico pré-existente
+corrigido via B4-B — `MotorConciliacao.conciliar()` recebe
+`fitids_por_lancamento` resolvido pelo chamador via `documento_id →
+Documento.numero_documento`; sem alteração em `Lancamento`; sem
+migration (D14).
+**AINDA NÃO DEFINIDO:** nenhum — mecanismo fechado e testado
+(`tests/unit/core/conciliacao/test_fitid_fase5.py`). Nota: esta correção
+não estende Camada 1 ao pagamento de cartão (D8), que permanece na
+Camada 2 por não ter `documento_id` — ver "Débito técnico registrado"
+para o achado completo.
 
 ### 12. Conciliação
 **DECISÃO APROVADA:** `1 Transação Bancária ↔ 1 Lançamento de Pagamento ↔
@@ -708,7 +748,7 @@ corrigido".
 
 - Chave exata de identidade do `CartaoCredito` para idempotência de conta (item 4).
 - Tolerância numérica de fechamento de fatura (item 3).
-- Mecanismo técnico exato de propagação do FITID (item 11) — a decisão de **quando** corrigir está fechada (D14); **como** corrigir, não.
+- ~~Mecanismo técnico exato de propagação do FITID~~ — **resolvido na Fase 5** (B4-B).
 - Regra de identificação de linha de juros/multa/encargo na extração (item 8).
 - Nomenclatura definitiva de eventos (item 13) e comandos CLI (item 14).
 - Campos exatos e threshold de confiança do OCR para fatura (item 17).

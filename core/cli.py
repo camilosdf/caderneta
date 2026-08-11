@@ -942,6 +942,19 @@ def conciliacao_executar(
             and data_inicio <= lanc.data_lancamento <= data_fim
         ]
 
+        # Fase 5 (ADR 010, D14, B4-B): resolve o FITID de cada lançamento
+        # via Lancamento.documento_id -> Documento.numero_documento, sem
+        # alterar Lancamento nem o motor. Lançamentos sem documento_id
+        # (ex.: cartão de crédito, D7/D8) não entram no mapa — nunca
+        # ativam a Camada 1, permanecem na Camada 2 (D15, inalterado).
+        fitids_por_lancamento: dict = {}
+        for lanc in lancamentos:
+            if lanc.documento_id is None:
+                continue
+            documento = uow.documentos.buscar_por_id(lanc.documento_id)
+            if documento is not None and documento.numero_documento:
+                fitids_por_lancamento[lanc.id] = documento.numero_documento
+
     console.print(
         f"Período: [cyan]{data_inicio}[/cyan] a [cyan]{data_fim}[/cyan] | "
         f"Transações bancárias: [bold]{len(transacoes)}[/bold] | "
@@ -959,6 +972,7 @@ def conciliacao_executar(
         empresa_id=empresa_id,
         periodo_inicio=data_inicio,
         periodo_fim=data_fim,
+        fitids_por_lancamento=fitids_por_lancamento,
     )
 
     # Exibir resumo
@@ -1045,6 +1059,155 @@ def conciliacao_listar(
 
     console.print(tabela)
     console.print(f"Total: [bold]{len(transacoes)}[/bold] transações")
+
+
+# =============================================================
+# CARTÃO DE CRÉDITO (ADR 010)
+# =============================================================
+
+cartao_app = typer.Typer(help="Faturas de Cartão de Crédito (ADR 010).")
+app.add_typer(cartao_app, name="cartao")
+
+
+@cartao_app.command(name="importar")
+def cartao_importar(
+    arquivo: Path = typer.Argument(..., help="Arquivo PDF da fatura."),  # noqa: B008
+    empresa: str = typer.Option(..., "--empresa", "-e", help="ID da empresa."),
+    emissor: str = typer.Option(..., "--emissor", help="Emissor do cartão (ex: Nubank)."),
+    final_numero: str = typer.Option(..., "--final", help="Últimos 4 dígitos do cartão."),
+    titular: str = typer.Option(..., "--titular", help="Nome do titular do cartão."),
+    conta_codigo: str = typer.Option(
+        ..., "--conta", help="Código da conta contábil de Passivo do cartão (DT-CC-01)."
+    ),
+    pasta_datalake: Path = typer.Option(  # noqa: B008
+        Path("datalake"), "--datalake", "-d", help="Pasta do datalake."
+    ),
+) -> None:
+    """Importa uma fatura de cartão de crédito em PDF.
+
+    Cria ou reaproveita o CartaoCredito pela chave de identidade
+    (emissor, final do número, titular — idempotente, B1). Idempotente
+    também ao nível de fatura: reimportar a mesma fatura (mesmo cartão
+    e período) não duplica (D13).
+
+    PDF_IMAGEM (fatura escaneada) não é suportado por este comando —
+    o pipeline de OCR não está conectado à CLI (nenhum comando desta
+    CLI usa OCR hoje; core/ nunca importa ai/, ADR 001).
+    """
+    from rich.console import Console
+
+    from core.application.use_cases.processar_fatura_cartao import (
+        DocumentoNaoEhFaturaError,
+        OCRNaoDisponivelError,
+        ProcessarFaturaCartaoUseCase,
+    )
+    from core.domain.entities import CartaoCredito, CodigoConta
+    from core.infra.unit_of_work import UnitOfWork
+    from core.parsers.detector import DetectorDocumento, TipoNaoSuportadoError
+    from shared.identifiers import empresa_id_from_string
+
+    console = Console()
+
+    if not arquivo.exists():
+        console.print(f"[red]Arquivo não encontrado: {arquivo}[/red]")
+        raise typer.Exit(1)
+
+    empresa_id = empresa_id_from_string(empresa)
+    sf = _session_factory(pasta_datalake)
+
+    with UnitOfWork(sf) as uow:
+        cartao = CartaoCredito(
+            empresa_id=empresa_id,
+            emissor=emissor,
+            final_numero=final_numero,
+            titular=titular,
+            conta_codigo=CodigoConta(conta_codigo),
+        )
+        cartao_novo = uow.cartoes_credito.salvar_se_novo(cartao)
+        if not cartao_novo:
+            cartao = uow.cartoes_credito.buscar_por_chave(
+                empresa_id, emissor, final_numero, titular
+            )
+        uow.commit()
+
+    console.print(
+        f"Cartão: [cyan]{emissor} ****{final_numero}[/cyan] "
+        f"({'novo' if cartao_novo else 'já cadastrado'})"
+    )
+
+    uc = ProcessarFaturaCartaoUseCase(
+        detector=DetectorDocumento(),
+        session_factory=sf,
+        event_bus=_event_bus(),
+    )
+
+    try:
+        resultado = uc.executar(arquivo, empresa_id=empresa_id, cartao_id=cartao.id)
+    except OCRNaoDisponivelError:
+        console.print(
+            "[red]Fatura em PDF_IMAGEM requer OCR, não conectado a esta CLI.[/red]"
+        )
+        raise typer.Exit(1)  # noqa: B904
+    except (DocumentoNaoEhFaturaError, TipoNaoSuportadoError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    if resultado.duplicada:
+        console.print("[yellow]Fatura já processada anteriormente — ignorada (D13).[/yellow]")
+        return
+
+    console.print(
+        f"[green]✓[/green] Fatura importada: [bold]{len(resultado.fatura.itens)}[/bold] itens | "
+        f"Status: [bold]{resultado.fatura.status_fechamento.value}[/bold] | "
+        f"Total: R$ {resultado.fatura.valor_total_declarado.valor:,.2f}"
+    )
+    for aviso in resultado.avisos:
+        console.print(f"[yellow]⚠[/yellow] {aviso}")
+
+
+@cartao_app.command(name="listar")
+def cartao_listar(
+    empresa: str = typer.Option(..., "--empresa", "-e", help="ID da empresa."),
+    pasta_datalake: Path = typer.Option(  # noqa: B008
+        Path("datalake"), "--datalake", "-d", help="Pasta do datalake."
+    ),
+) -> None:
+    """Lista faturas de cartão de crédito importadas."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    console = Console()
+    empresa_id = empresa_id_from_string(empresa)
+    sf = _session_factory(pasta_datalake)
+
+    with UnitOfWork(sf) as uow:
+        faturas = uow.faturas_cartao.listar_por_empresa(empresa_id)
+
+    if not faturas:
+        console.print("[yellow]Nenhuma fatura de cartão encontrada.[/yellow]")
+        return
+
+    tabela = Table(title="Faturas de Cartão de Crédito")
+    tabela.add_column("Período")
+    tabela.add_column("Vencimento")
+    tabela.add_column("Itens", justify="right")
+    tabela.add_column("Total", justify="right")
+    tabela.add_column("Status")
+
+    for fatura in faturas:
+        tabela.add_row(
+            str(fatura.periodo_referencia),
+            str(fatura.data_vencimento) if fatura.data_vencimento else "—",
+            str(len(fatura.itens)),
+            f"R$ {fatura.valor_total_declarado.valor:,.2f}",
+            fatura.status_fechamento.value,
+        )
+
+    console.print(tabela)
+    console.print(f"Total: [bold]{len(faturas)}[/bold] faturas")
 
 # =============================================================
 

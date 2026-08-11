@@ -17,6 +17,19 @@ Princípios mantidos (parecer Etapa 8):
 Tolerâncias padrão (configuráveis):
   - Valor: ± R$ 0,10
   - Data:  ± 2 dias
+
+Camada 1 / FITID (Fase 5 — ADR 010, D14, fechado como B4-B):
+  O motor recebe um mapa opcional `fitids_por_lancamento` (lancamento_id
+  -> FITID), já resolvido pelo CHAMADOR a partir de
+  `Lancamento.documento_id -> Documento.numero_documento`. O motor nunca
+  consulta Documento nem qualquer repositório — preserva a pureza "sem
+  I/O" listada acima. Sem esse parâmetro, o comportamento é idêntico ao
+  anterior à correção (Camada 1 nunca ativa).
+
+  Lançamentos sem `documento_id` — nenhum lançamento de cartão de crédito
+  (D7/D8, ADR 010) o possui — nunca aparecem nesse mapa e nunca ativam a
+  Camada 1. Para cartão, a Camada 2 (valor+data) permanece o mecanismo
+  real de conciliação, conforme D15 (não alterado por esta correção).
 """
 
 from dataclasses import dataclass
@@ -72,11 +85,20 @@ class MotorConciliacao:
         empresa_id: UUID,
         periodo_inicio: date,
         periodo_fim: date,
+        fitids_por_lancamento: dict[UUID, str] | None = None,
     ) -> RelatorioConciliacao:
         """Executa a conciliação e retorna o relatório completo.
 
         Matching é um-para-um: cada transação e cada lançamento aparecem
         em no máximo um item do relatório (invariante de domínio).
+
+        fitids_por_lancamento (Fase 5, B4-B — ADR 010, D14): mapa opcional
+        pré-resolvido pelo chamador (lancamento_id -> FITID), usado pela
+        Camada 1. O motor não faz nenhuma consulta a Documento/banco —
+        continua recebendo apenas dados já resolvidos, preservando sua
+        pureza ("sem I/O", ver docstring do módulo). Sem esse parâmetro
+        (retrocompatível), o comportamento é idêntico ao anterior: Camada 1
+        nunca ativa, matching cai direto em Camada 2/3.
         """
         relatorio = RelatorioConciliacao(
             empresa_id=empresa_id,
@@ -84,13 +106,15 @@ class MotorConciliacao:
             periodo_fim=periodo_fim,
         )
 
+        fitids = fitids_por_lancamento or {}
+
         # Conjuntos de controle de unicidade
         lancamentos_usados: set[UUID] = set()
         transacoes_usadas: set[UUID] = set()
 
         # ── Fase 1: associar cada transação ao seu melhor match ───────────
         for tx in transacoes:
-            candidatos = self._buscar_candidatos(tx, lancamentos, lancamentos_usados)
+            candidatos = self._buscar_candidatos(tx, lancamentos, lancamentos_usados, fitids)
             item = self._decidir(tx, candidatos)
 
             if item.lancamento_id is not None:
@@ -120,6 +144,7 @@ class MotorConciliacao:
         tx: TransacaoBancaria,
         lancamentos: list[Lancamento],
         usados: set[UUID],
+        fitids_por_lancamento: dict[UUID, str],
     ) -> list[CandidatoMatch]:
         """Produz candidatos em ordem decrescente de score.
 
@@ -131,7 +156,7 @@ class MotorConciliacao:
             if lanc.id in usados:
                 continue  # já conciliado com outra transação
 
-            candidato = self._avaliar_par(tx, lanc)
+            candidato = self._avaliar_par(tx, lanc, fitids_por_lancamento)
             if candidato is not None:
                 candidatos.append(candidato)
 
@@ -141,6 +166,7 @@ class MotorConciliacao:
         self,
         tx: TransacaoBancaria,
         lanc: Lancamento,
+        fitids_por_lancamento: dict[UUID, str],
     ) -> CandidatoMatch | None:
         """Avalia um par (transação, lançamento) e retorna candidato ou None.
 
@@ -155,10 +181,13 @@ class MotorConciliacao:
         diferenca_valor = Decimal("0")
         diferenca_dias = 0
 
-        # ── Camada 1: FITID ───────────────────────────────────────────────
-        # numero_documento no Lancamento pode carregar o FITID original
-        # (via OFXParser que armazena transacao.id em numero_documento)
-        fitid_lanc = self._fitid_do_lancamento(lanc)
+        # ── Camada 1: FITID (Fase 5, B4-B) ─────────────────────────────────
+        # fitids_por_lancamento é resolvido pelo chamador (documento_id ->
+        # Documento.numero_documento) — o motor não consulta nada, só
+        # recebe o mapa já pronto. Lançamentos sem documento_id (ex.: os
+        # de cartão, D7/D8) nunca aparecem nesse mapa — nunca ativam a
+        # Camada 1 (ADR 010, achado da Etapa 5.0).
+        fitid_lanc = self._fitid_do_lancamento(lanc, fitids_por_lancamento)
         if fitid_lanc and fitid_lanc == tx.fitid:
             return CandidatoMatch(
                 lancamento_id=lanc.id,
@@ -286,17 +315,19 @@ class MotorConciliacao:
 
     # ── Utilitários internos ──────────────────────────────────────────────
 
-    def _fitid_do_lancamento(self, lanc: Lancamento) -> str | None:
-        """Extrai o FITID do lançamento se disponível.
+    def _fitid_do_lancamento(
+        self, lanc: Lancamento, fitids_por_lancamento: dict[UUID, str]
+    ) -> str | None:
+        """Retorna o FITID do lançamento, se o chamador o resolveu (Fase 5, B4-B).
 
-        O OFXParser armazena o FITID em Documento.numero_documento.
-        O lançamento pode ter sido gerado a partir de um Documento OFX
-        cujo numero_documento era o FITID original.
+        Correção do débito técnico DT registrado no ADR 010 (D14): a
+        versão anterior verificava um atributo (`numero_documento_origem`)
+        que nunca existiu em `Lancamento` — Camada 1 nunca ativava. Agora
+        o motor consulta um mapa já resolvido pelo chamador a partir de
+        `Lancamento.documento_id -> Documento.numero_documento` — sem
+        alterar `Lancamento`, sem migration, sem o motor fazer I/O.
         """
-        # Acesso direto se o lançamento tiver referência OFX
-        if hasattr(lanc, "numero_documento_origem"):
-            return lanc.numero_documento_origem
-        return None
+        return fitids_por_lancamento.get(lanc.id)
 
     def _diferenca_dias(self, data_tx: date, lanc: Lancamento) -> int:
         """Diferença em dias entre a transação bancária e o lançamento."""
