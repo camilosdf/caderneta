@@ -62,8 +62,8 @@ testados, mas nunca chamados por nenhum use case até hoje).
 | **B6-0** | Gerar e persistir lançamentos D7/D8 a partir de `FaturaCartao` `FECHADA`; gravar `CompraCartao.lancamento_id`; transacional | `core/application/use_cases/gerar_lancamentos_fatura_cartao.py` (novo); `core/infra/repositories/cartao_repository.py` (novo método de atualização de item — `FaturaCartaoRepository` hoje só tem `salvar_se_nova`, sem update parcial de `CompraCartao`) | Não |
 | **B6-1** | Identificar o `Lancamento` único de pagamento da fatura (via `FaturaCartaoRepository`, após B6-0) | `core/application/...` | Não |
 | **B6-2** | Excluir compras individuais via `CompraCartao.lancamento_id` (populado por B6-0) | `core/application/...`, eventualmente CLI | Não |
-| **B6-3** | Conciliar somente pagamento agregado ↔ transação bancária | `MotorConciliacao` (inalterado) + novo use case de orquestração | Não |
-| **B6-4** | Preservar matching 1:1 | Motor existente (Fase 5, inalterado) | Não |
+| **B6-3** | Conciliar somente pagamento agregado ↔ transação bancária — **CONCLUÍDA**: `ConciliarPagamentoFaturaCartaoUseCase`, candidato único por construção (não por filtro), 9 testes, 721/721 sandbox + 814 VM, zero migration, `MotorConciliacao`/`core/cli.py`/domínio confirmados intocados por diff/timestamp | `MotorConciliacao` (inalterado) + novo use case de orquestração | Não |
+| **B6-4** | Preservar matching 1:1 — **CONCLUÍDA**: 2 testes (não 6, após verificar que a maior parte já era coberta genericamente desde a Fase 5 — `TestUnicidade`); fronteira cross-call de B6-3 documentada no ADR como nota de escopo (não é débito técnico novo) | Motor existente (Fase 5, inalterado) | Não |
 | **B6-5** | Persistir vínculo Fatura ↔ Lançamento ↔ Transação | `core/infra/db/models.py` (novo `PagamentoFaturaCartaoORM`), novo repositório | **Sim** |
 | **B6-6** | Registrar método/resultado da conciliação | mesmo modelo de B6-5 | **Sim** (mesma migration) |
 | **B6-7** | Auditoria | `core/audit/chain.py` (novos `TipoEvento`, se necessário) + use case | Não |
@@ -221,11 +221,11 @@ FaturaCartao (FECHADA, persistida — Fase 4)
 | Bloco | Estado |
 |---|---|
 | Etapa 6.1 (A×B) | **B aprovada** |
-| B6-0 — geração/persistência | **Aprovado como pré-requisito**, transacional, idempotente por reutilização |
-| B6-1 — localizar pagamento | Mantido |
-| B6-2 — excluir compras | Mantido, via `CompraCartao.lancamento_id` |
-| B6-3 — conciliação agregada | Mantido |
-| B6-4 — 1:1 | Mantido |
+| B6-0 — geração/persistência | **Concluída** — implementada, testada, commitada (`43e1898`) |
+| B6-1 — localizar pagamento | **Concluída** — implementada, testada, identidade determinística comprovada por teste (impostor) |
+| B6-2 — excluir compras | **Concluída** — implementada, testada, filtro via `compras_cartao.lancamento_id`, DT-CC-03 registrada |
+| B6-3 — conciliação agregada | **Concluída** — `ConciliarPagamentoFaturaCartaoUseCase`, candidato único por construção, nota de rastreabilidade DT-CC-03 aplicada |
+| B6-4 — 1:1 | **Concluída** — 2 testes, contrato já majoritariamente coberto genericamente desde a Fase 5; fronteira cross-call de B6-3 documentada |
 | B6-5/6/14 — vínculo persistente | Mantido, uma migration |
 | FITID | Restrito à Fase 5, inalterado |
 | `Lancamento` central | Intocado |

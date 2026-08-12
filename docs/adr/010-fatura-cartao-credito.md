@@ -219,6 +219,74 @@ outra fase.
 
 ---
 
+## Débito técnico registrado — DT-CC-03
+
+**`LancamentoRepository.listar_por_empresa` limita a 100 registros antes
+do filtro temporal.** Descoberto na inspeção de B6-2
+(`core/infra/repositories/lancamento_repository.py`, parâmetro
+`limit: int = 100`). `conciliacao_executar`
+(`core/cli.py`) chama `listar_por_empresa(empresa_id, status=APROVADO)`
+sem passar `data_inicio`/`data_fim` nativamente ao repositório — o
+filtro de período é aplicado em Python, **depois** do fetch já limitado
+a 100 linhas.
+
+**Impacto potencial:** execução de conciliação pode não considerar todos
+os lançamentos do período quando a empresa tem mais de 100 lançamentos
+`APROVADO`, independente do período consultado — o `limit` corta antes
+do filtro temporal decidir o que é relevante.
+
+**Escopo:** fora de B6-2 — é um mecanismo geral de conciliação, não
+específico de cartão. Corrigir agora misturaria uma correção geral do
+motor/repositório com a implementação específica de cartão. Correção
+futura deve considerar filtro temporal nativo no repositório
+(`listar_por_empresa` já aceita `data_inicio`/`data_fim` como
+parâmetros — bastaria `conciliacao_executar` passá-los) e/ou paginação
+para empresas com muitos lançamentos aprovados.
+
+**Nota de rastreabilidade (Fase 6, B6-3):** o use case específico de
+B6-3 (`ConciliarPagamentoFaturaCartaoUseCase`) localiza o pagamento por
+identidade (`buscar_por_id`, via B6-1) e, portanto, **não depende** do
+limite de `listar_por_empresa` registrado acima. Isto é documentação de
+rastreabilidade — não é correção do débito, que permanece registrado e
+pendente conforme seu escopo original (aplicável a
+`conciliacao_executar`, não a B6-3).
+
+---
+
+## Nota de escopo — fronteira cross-call de B6-3 (Fase 6, B6-4)
+
+**`ConciliarPagamentoFaturaCartaoUseCase` (B6-3) é deliberadamente
+isolado por fatura e não mantém estado de concorrência entre chamadas
+independentes.** Duas execuções separadas de B6-3, para faturas
+diferentes que competem pela mesma `TransacaoBancaria`, podem ambas
+retornar `CONCILIADO` para essa transação — sem exceção, sem
+comportamento de erro. Isso é **comportamento atual esperado, não uma
+falha** — comprovado por teste dedicado
+(`tests/unit/core/cartao/test_matching_1to1_fase6_b64.py`,
+`TestBFronteiraCaminhoEstreitoB63`).
+
+A garantia cross-call (impedir que **duas** conciliações concorrentes
+sejam efetivamente persistidas para a mesma transação) **não pertence a
+B6-3** — será materializada pelas restrições `UNIQUE` de
+`pagamentos_faturas_cartao` (`fatura_cartao_id`, `lancamento_id`,
+`transacao_bancaria_id`), especificadas em B6-5/B6-6/B6-14.
+
+**Esta não é uma nova entrada de débito técnico** (não é DT-CC-04) — é
+uma lacuna deliberada e já prevista pela arquitetura aprovada, não uma
+descoberta de algo que deveria ter sido evitado. Registrar aqui apenas
+para que uma equipe futura não interprete a ausência de proteção neste
+nível como esquecimento, nem "corrija" B6-3 introduzindo estado
+compartilhado — o que violaria o desenho já aprovado (B6-3 permanece
+isolado por fatura, por decisão, não por limitação a corrigir).
+
+No caminho genérico (`conciliacao_executar`, que processa todos os
+lançamentos aprovados do período numa única chamada ao motor), essa
+proteção **já existe**, pelo mesmo mecanismo de unicidade do motor já
+testado desde a Fase 5 (`TestUnicidade`) — confirmado com dados reais
+de cartão por `TestACaminhoGenericoDuasFaturasMesmaTransacao`.
+
+---
+
 ## Decisão arquitetural registrada — Identidade do lançamento de pagamento (B6-0, Fase 6)
 
 **O lançamento de pagamento de uma `FaturaCartao` utiliza identidade
