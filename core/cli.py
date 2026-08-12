@@ -942,6 +942,15 @@ def conciliacao_executar(
             and data_inicio <= lanc.data_lancamento <= data_fim
         ]
 
+        # Fase 6, B6-2 (ADR 010): exclui compras individuais de cartão
+        # (D7) da lista de candidatos — nunca via categoria/valor/data,
+        # somente via CompraCartao.lancamento_id. O lançamento de
+        # pagamento (D8) nunca aparece em compras_cartao — preservado
+        # automaticamente. Lançamentos não relacionados a cartão também
+        # são preservados (não têm linha correspondente em compras_cartao).
+        ids_compras_cartao = uow.faturas_cartao.listar_lancamento_ids_de_compras(empresa_id)
+        lancamentos = [lanc for lanc in lancamentos if lanc.id not in ids_compras_cartao]
+
         # Fase 5 (ADR 010, D14, B4-B): resolve o FITID de cada lançamento
         # via Lancamento.documento_id -> Documento.numero_documento, sem
         # alterar Lancamento nem o motor. Lançamentos sem documento_id

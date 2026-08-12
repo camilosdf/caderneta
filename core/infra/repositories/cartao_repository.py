@@ -146,6 +146,28 @@ class FaturaCartaoRepository:
             if orm_item is not None:
                 orm_item.lancamento_id = str(item.lancamento_id)
 
+    def listar_lancamento_ids_de_compras(self, empresa_id: UUID) -> set[UUID]:
+        """Retorna o conjunto de lancamento_id de todas as CompraCartao
+        (D7) da empresa que já têm lançamento gerado (ADR 010, Fase 6,
+        B6-2).
+
+        Usado exclusivamente para excluir compras individuais da lista
+        de candidatos de MotorConciliacao — nunca via categoria, valor,
+        data ou descrição. Independente de período: retorna todo o
+        histórico da empresa, não apenas um intervalo — a aplicação de
+        um filtro temporal (se necessário) é responsabilidade exclusiva
+        de quem já filtrou a lista de lançamentos por data (o método em
+        si não introduz nem pressupõe recorte temporal).
+        """
+        stmt = select(CompraCartaoORM.lancamento_id).where(
+            CompraCartaoORM.empresa_id == str(empresa_id),
+            CompraCartaoORM.lancamento_id.is_not(None),
+        )
+        return {
+            UUID(lancamento_id)
+            for lancamento_id in self._session.execute(stmt).scalars()
+        }
+
     def _buscar_orm_por_chave(
         self, cartao_id: str, periodo_referencia: date | None
     ) -> FaturaCartaoORM | None:
