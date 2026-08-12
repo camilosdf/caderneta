@@ -41,11 +41,18 @@ from core.rule_engine.lancamento_service import LancamentoService
 _NAMESPACE_PAGAMENTO_FATURA = uuid5(NAMESPACE_URL, "caderneta:adr010:pagamento-fatura-cartao")
 
 
-def _id_determinista_pagamento(fatura_id: UUID) -> UUID:
+def calcular_id_lancamento_pagamento(fatura_id: UUID) -> UUID:
     """Id determinístico do Lancamento de pagamento de uma fatura.
 
     Mesma fatura_id sempre produz o mesmo id — usado como chave de
-    idempotência sem exigir campo novo em FaturaCartao/ORM.
+    idempotência (B6-0) e como forma exclusiva de localizar o
+    lançamento de pagamento (B6-1). Nunca localizar por heurística
+    (categoria/valor/data) — ver ADR 010, "Decisão arquitetural
+    registrada — Identidade do lançamento de pagamento".
+
+    Pública (não prefixada com _) porque é reutilizada fora deste
+    módulo, por localizar_pagamento_fatura_cartao.py (B6-1) e por
+    fases futuras que precisem da mesma identidade.
     """
     return uuid5(_NAMESPACE_PAGAMENTO_FATURA, str(fatura_id))
 
@@ -101,7 +108,7 @@ class GerarLancamentosFaturaCartaoUseCase:
                     f"são gerados para faturas FECHADA (D5)."
                 )
 
-            id_pagamento = _id_determinista_pagamento(fatura.id)
+            id_pagamento = calcular_id_lancamento_pagamento(fatura.id)
             pagamento_existente = uow.lancamentos.buscar_por_id(id_pagamento)
             todas_compras_ja_vinculadas = all(
                 item.lancamento_id is not None for item in fatura.itens
