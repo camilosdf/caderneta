@@ -20,6 +20,7 @@ from core.infra.repositories.audit_repository import AuditRepository
 from core.infra.repositories.cartao_repository import (
     CartaoCreditoRepository,
     FaturaCartaoRepository,
+    PagamentoFaturaCartaoRepository,
 )
 from core.infra.repositories.centro_custo_repository import CentroCustoRepository
 from core.infra.repositories.documento_repository import DocumentoRepository
@@ -52,6 +53,7 @@ class UnitOfWork:
         self.transacoes_bancarias: Optional[TransacaoBancariaRepository] = None
         self.cartoes_credito: Optional[CartaoCreditoRepository] = None
         self.faturas_cartao: Optional[FaturaCartaoRepository] = None
+        self.pagamentos_faturas_cartao: Optional[PagamentoFaturaCartaoRepository] = None
 
     def __enter__(self) -> "UnitOfWork":
         self._session = self._session_factory._session_factory()
@@ -66,6 +68,7 @@ class UnitOfWork:
         self.transacoes_bancarias = TransacaoBancariaRepository(self._session)
         self.cartoes_credito = CartaoCreditoRepository(self._session)
         self.faturas_cartao = FaturaCartaoRepository(self._session)
+        self.pagamentos_faturas_cartao = PagamentoFaturaCartaoRepository(self._session)
 
         return self
 
@@ -92,6 +95,7 @@ class UnitOfWork:
             self.transacoes_bancarias = None
             self.cartoes_credito = None
             self.faturas_cartao = None
+            self.pagamentos_faturas_cartao = None
 
     def commit(self) -> None:
         """Confirma todas as operações realizadas nos repositórios desta UoW."""

@@ -475,3 +475,67 @@ class CompraCartaoORM(Base):
 
     def __repr__(self) -> str:
         return f"<CompraCartaoORM tipo={self.tipo} valor={self.valor}>"
+
+
+# ---------------------------------------------------------------------------
+# ADR 010 — Faturas de Cartão de Crédito (Fase 6 — B6-5/B6-6/B6-14)
+#
+# Materializa a restrição 1:1 já testada em memória (B6-4) no nível de
+# banco. As três FKs são reais (fatura_cartao_id -> faturas_cartao,
+# lancamento_id -> lancamentos, transacao_bancaria_id -> transacoes_bancarias)
+# — só possível porque B2 (migration de transacoes_bancarias, bloqueador
+# pré-existente do Gate 0) foi resolvida antes desta etapa. Nenhuma
+# referência textual sem FK nesta tabela (ao contrário de DT-CC-01, que
+# tratava de uma tabela ausente — aqui as três existem).
+# ---------------------------------------------------------------------------
+
+
+class PagamentoFaturaCartaoORM(Base):
+    """Persiste o vínculo Fatura <-> Lançamento de pagamento <-> Transação
+    bancária (ADR 010, B6-5/B6-6/B6-14).
+
+    As três UNIQUE isoladas materializam, em nível de banco, as
+    invariantes já comprovadas em memória por B6-4:
+      - fatura_cartao_id UNIQUE -> uma fatura tem no máximo um vínculo
+        (D8 — pagamento agregado único).
+      - lancamento_id UNIQUE -> um lançamento de pagamento vincula a no
+        máximo uma transação.
+      - transacao_bancaria_id UNIQUE -> uma transação bancária liquida
+        no máximo uma obrigação — fecha a lacuna documentada no ADR
+        ("Nota de escopo — fronteira cross-call de B6-3"): duas
+        execuções independentes de B6-3 podem calcular CONCILIADO para
+        a mesma transação, mas só uma consegue persistir aqui.
+    """
+
+    __tablename__ = "pagamentos_faturas_cartao"
+    __table_args__ = (
+        UniqueConstraint("fatura_cartao_id", name="uq_pagamento_fatura_cartao"),
+        UniqueConstraint("lancamento_id", name="uq_pagamento_lancamento"),
+        UniqueConstraint("transacao_bancaria_id", name="uq_pagamento_transacao_bancaria"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+
+    fatura_cartao_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("faturas_cartao.id", ondelete="CASCADE"), nullable=False
+    )
+    lancamento_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("lancamentos.id", ondelete="CASCADE"), nullable=False
+    )
+    transacao_bancaria_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("transacoes_bancarias.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # B6-6 — método/resultado da conciliação (espelha TipoConciliacao /
+    # MetodoMatching do domínio; armazenados como string, mesmo padrão
+    # já usado em FaturaCartaoORM.status_fechamento).
+    metodo_matching: Mapped[str] = mapped_column(String(20), nullable=False)
+    score: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<PagamentoFaturaCartaoORM fatura={self.fatura_cartao_id} status={self.status}>"

@@ -16,22 +16,29 @@ existência por chave antes de inserir; retorna bool indicando se houve
 inserção.
 """
 
-from datetime import date
-from uuid import UUID
+from datetime import UTC, date, datetime
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.domain.entities import (
     CartaoCredito,
     CodigoConta,
     CompraCartao,
+    ConciliacaoItem,
     Dinheiro,
     FaturaCartao,
     StatusFechamentoFatura,
     TipoItemFatura,
 )
-from core.infra.db.models import CartaoCreditoORM, CompraCartaoORM, FaturaCartaoORM
+from core.infra.db.models import (
+    CartaoCreditoORM,
+    CompraCartaoORM,
+    FaturaCartaoORM,
+    PagamentoFaturaCartaoORM,
+)
 
 
 class CartaoCreditoRepository:
@@ -262,3 +269,88 @@ def _item_para_dominio(orm: CompraCartaoORM) -> CompraCartao:
         criado_em=orm.criado_em,
         confidence=None,  # não persistido nesta fase — ver Ambiguidade no relatório da Fase 4
     )
+
+
+class PagamentoFaturaCartaoRepository:
+    """Repositório de PagamentoFaturaCartao — vínculo Fatura <-> Lançamento
+    de pagamento <-> Transação bancária (ADR 010, B6-5/B6-6/B6-14).
+
+    Mecanismo de concorrência (Gate B6-5, decisão explícita): INSERT
+    direto, protegido pelas três UNIQUE do banco, com captura de
+    IntegrityError — não check-then-insert. A constraint é a
+    autoridade, não uma checagem prévia (que teria janela de corrida
+    sob concorrência real). Isto fecha, no nível de persistência, a
+    lacuna documentada em "Nota de escopo — fronteira cross-call de
+    B6-3" (ADR 010): duas execuções independentes de B6-3 podem
+    calcular CONCILIADO para a mesma transação, mas só uma consegue
+    persistir aqui — a segunda recebe violação de UNIQUE, tratada
+    graciosamente (retorna False), não propagada como erro genérico.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def persistir_conciliacao(
+        self,
+        empresa_id: UUID,
+        fatura_cartao_id: UUID,
+        item: ConciliacaoItem,
+    ) -> bool:
+        """Persiste o vínculo de uma conciliação CONCILIADO.
+
+        Retorna True se persistido com sucesso, False se qualquer uma
+        das três UNIQUE já estava ocupada (fatura, lançamento ou
+        transação já vinculados por outra execução) — nesse caso a
+        transação SQL corrente é revertida via savepoint (ROLLBACK do
+        INSERT que falhou), sem derrubar a UnitOfWork inteira, para que
+        o chamador possa decidir o que fazer (ex.: reportar
+        "já conciliado por outra execução").
+
+        Não decide QUANDO persistir — isso é responsabilidade do
+        chamador (só deve chamar este método para item.status ==
+        CONCILIADO; chamar para outro status é erro de uso, não
+        validado aqui, mesmo princípio de "este serviço não decide
+        categoria/conta" já usado em LancamentoService).
+        """
+        if item.lancamento_id is None or item.transacao_bancaria_id is None:
+            raise ValueError(
+                "persistir_conciliacao requer lancamento_id e "
+                "transacao_bancaria_id preenchidos — chame apenas para "
+                "item.status == CONCILIADO."
+            )
+
+        agora = datetime.now(UTC)
+        orm = PagamentoFaturaCartaoORM(
+            id=str(uuid4()),
+            empresa_id=str(empresa_id),
+            fatura_cartao_id=str(fatura_cartao_id),
+            lancamento_id=str(item.lancamento_id),
+            transacao_bancaria_id=str(item.transacao_bancaria_id),
+            metodo_matching=item.metodo.value,
+            score=item.score,
+            status=item.status.value,
+            criado_em=agora,
+            atualizado_em=agora,
+        )
+
+        savepoint = self._session.begin_nested()
+        try:
+            self._session.add(orm)
+            self._session.flush()
+            savepoint.commit()
+            return True
+        except IntegrityError:
+            savepoint.rollback()
+            return False
+
+    def buscar_por_fatura(self, fatura_cartao_id: UUID) -> PagamentoFaturaCartaoORM | None:
+        stmt = select(PagamentoFaturaCartaoORM).where(
+            PagamentoFaturaCartaoORM.fatura_cartao_id == str(fatura_cartao_id)
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def buscar_por_transacao(self, transacao_bancaria_id: UUID) -> PagamentoFaturaCartaoORM | None:
+        stmt = select(PagamentoFaturaCartaoORM).where(
+            PagamentoFaturaCartaoORM.transacao_bancaria_id == str(transacao_bancaria_id)
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
