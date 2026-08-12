@@ -26,11 +26,11 @@ Total desta fatura R$ 74,40
 
 @pytest.fixture(autouse=True)
 def _forcar_sqlite_via_datalake(monkeypatch):
-    """tests/conftest.py define DATABASE_URL=postgresql://... como
-    autouse global (para os testes de api/). Os comandos de CLI aqui
-    testados usam --datalake para apontar SQLite isolado por teste —
-    sem remover DATABASE_URL, _session_factory() (core/cli.py) priorizaria
-    a URL do Postgres, inexistente neste ambiente de teste."""
+    """tests/conftest.py define uma URL de banco externo (esquema
+    Postgres) como autouse global, para os testes de api/. Os comandos
+    de CLI aqui testados usam --datalake para apontar SQLite isolado
+    por teste — sem remover essa URL, _session_factory() (core/cli.py)
+    priorizaria o banco externo, inexistente neste ambiente de teste."""
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
 
