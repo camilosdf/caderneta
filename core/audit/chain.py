@@ -37,6 +37,8 @@ class TipoEvento(StrEnum):
     ERRO_SISTEMA             = "ERRO_SISTEMA"
     USUARIO_LOGIN            = "USUARIO_LOGIN"
     USUARIO_LOGOUT           = "USUARIO_LOGOUT"
+    # ADR 007 — Política de Versionamento (transição v0.999 -> v1.0.0)
+    VERSAO_HOMOLOGADA        = "VERSAO_HOMOLOGADA"
     # Etapa 8 — Motor de Conciliação Bancária
     CONCILIACAO_INICIADA     = "CONCILIACAO_INICIADA"
     MATCH_IDENTIFICADO       = "MATCH_IDENTIFICADO"

@@ -1218,6 +1218,147 @@ def cartao_listar(
     console.print(tabela)
     console.print(f"Total: [bold]{len(faturas)}[/bold] faturas")
 
+
+@cartao_app.command(name="gerar-lancamentos")
+def cartao_gerar_lancamentos(
+    fatura_id: str = typer.Argument(..., help="ID da fatura (UUID)."),
+    empresa: str = typer.Option(..., "--empresa", "-e", help="ID da empresa."),
+    conta_cartao: str = typer.Option(..., "--conta-cartao", help="Conta de Passivo do cartão (D6)."),
+    conta_banco: str = typer.Option(..., "--conta-banco", help="Conta bancária de origem do pagamento (D8)."),
+    conta_compra: str = typer.Option(..., "--conta-compra", help="Conta de despesa/ativo para itens tipo COMPRA (D7)."),
+    conta_iof: str = typer.Option(None, "--conta-iof", help="Conta de despesa financeira para IOF (D9) — obrigatória se a fatura tiver item IOF."),
+    conta_juros: str = typer.Option(None, "--conta-juros", help="Conta de despesa financeira para juros (D10) — obrigatória se a fatura tiver item de juros."),
+    conta_multa: str = typer.Option(None, "--conta-multa", help="Conta de despesa financeira para multa (D10) — obrigatória se a fatura tiver item de multa."),
+    conta_encargo: str = typer.Option(None, "--conta-encargo", help="Conta de despesa financeira para encargo (D10) — obrigatória se a fatura tiver item de encargo."),
+    conta_anuidade: str = typer.Option(None, "--conta-anuidade", help="Conta para anuidade — usa --conta-compra se omitida."),
+    conta_estorno: str = typer.Option(None, "--conta-estorno", help="Conta para estorno — usa --conta-compra se omitida."),
+    pasta_datalake: Path = typer.Option(  # noqa: B008
+        Path("datalake"), "--datalake", "-d", help="Pasta do datalake."
+    ),
+) -> None:
+    """Gera e persiste os lançamentos de compra (D7) e pagamento (D8) de
+    uma fatura FECHADA (B6-0). Idempotente — reexecutar reaproveita os
+    lançamentos já gerados, sem duplicar (garantia do próprio use case,
+    não desta camada de CLI).
+    """
+    from uuid import UUID
+
+    from rich.console import Console
+
+    from core.application.use_cases.gerar_lancamentos_fatura_cartao import (
+        ContaDespesaNaoMapeadaError,
+        FaturaNaoEncontradaError,
+        FaturaNaoFechadaError,
+        GerarLancamentosFaturaCartaoUseCase,
+    )
+    from core.domain.entities import CodigoConta, TipoItemFatura
+
+    console = Console()
+
+    contas_despesa_por_tipo = {TipoItemFatura.COMPRA: CodigoConta(conta_compra)}
+    if conta_iof:
+        contas_despesa_por_tipo[TipoItemFatura.IOF] = CodigoConta(conta_iof)
+    if conta_juros:
+        contas_despesa_por_tipo[TipoItemFatura.JUROS] = CodigoConta(conta_juros)
+    if conta_multa:
+        contas_despesa_por_tipo[TipoItemFatura.MULTA] = CodigoConta(conta_multa)
+    if conta_encargo:
+        contas_despesa_por_tipo[TipoItemFatura.ENCARGO] = CodigoConta(conta_encargo)
+    contas_despesa_por_tipo[TipoItemFatura.ANUIDADE] = CodigoConta(conta_anuidade or conta_compra)
+    contas_despesa_por_tipo[TipoItemFatura.ESTORNO] = CodigoConta(conta_estorno or conta_compra)
+
+    sf = _session_factory(pasta_datalake)
+    uc = GerarLancamentosFaturaCartaoUseCase(session_factory=sf)
+
+    try:
+        resultado = uc.executar(
+            UUID(fatura_id),
+            conta_cartao=CodigoConta(conta_cartao),
+            conta_banco=CodigoConta(conta_banco),
+            contas_despesa_por_tipo=contas_despesa_por_tipo,
+        )
+    except FaturaNaoEncontradaError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+    except FaturaNaoFechadaError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+    except ContaDespesaNaoMapeadaError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    if resultado.ja_processado:
+        console.print("[yellow]Fatura já processada anteriormente — lançamentos reaproveitados (idempotente).[/yellow]")
+    else:
+        console.print(
+            f"[green]✓[/green] Lançamentos gerados: "
+            f"[bold]{len(resultado.lancamentos_compra_ids)}[/bold] de compra + 1 de pagamento."
+        )
+    console.print(f"Lançamento de pagamento: [cyan]{resultado.lancamento_pagamento_id}[/cyan]")
+
+
+@cartao_app.command(name="conciliar-pagamento")
+def cartao_conciliar_pagamento(
+    fatura_id: str = typer.Argument(..., help="ID da fatura (UUID)."),
+    empresa: str = typer.Option(..., "--empresa", "-e", help="ID da empresa."),
+    periodo: str = typer.Option(..., "--periodo", help="Período de busca de transações, formato AAAA-MM."),
+    pasta_datalake: Path = typer.Option(  # noqa: B008
+        Path("datalake"), "--datalake", "-d", help="Pasta do datalake."
+    ),
+) -> None:
+    """Concilia o lançamento de pagamento agregado de uma fatura contra
+    o extrato bancário (B6-3), persiste o vínculo quando CONCILIADO
+    (B6-5/6/14), registra auditoria (B6-7) e publica o evento (B6-8).
+    Idempotente — reexecutar reaproveita o vínculo já persistido, sem
+    duplicar (garantia dos use cases, não desta camada de CLI).
+    """
+    from datetime import datetime
+    from uuid import UUID
+
+    from rich.console import Console
+
+    from core.application.use_cases.gerar_lancamentos_fatura_cartao import (
+        FaturaNaoEncontradaError,
+    )
+    from core.application.use_cases.localizar_pagamento_fatura_cartao import (
+        PagamentoNaoGeradoError,
+    )
+    from core.application.use_cases.persistir_conciliacao_pagamento_fatura_cartao import (
+        PersistirConciliacaoPagamentoFaturaCartaoUseCase,
+    )
+    from core.domain.entities import TipoConciliacao
+
+    console = Console()
+
+    ano, mes = (int(p) for p in periodo.split("-"))
+    data_inicio = datetime(ano, mes, 1).date()
+    if mes == 12:
+        data_fim = datetime(ano, 12, 31).date()
+    else:
+        data_fim = datetime(ano, mes + 1, 1).date()
+        from datetime import timedelta
+        data_fim = data_fim - timedelta(days=1)
+
+    sf = _session_factory(pasta_datalake)
+    uc = PersistirConciliacaoPagamentoFaturaCartaoUseCase(session_factory=sf, event_bus=_event_bus())
+
+    try:
+        resultado = uc.executar(UUID(fatura_id), data_inicio=data_inicio, data_fim=data_fim)
+    except FaturaNaoEncontradaError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+    except PagamentoNaoGeradoError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    if resultado.item.status == TipoConciliacao.CONCILIADO:
+        if resultado.persistido:
+            console.print(f"[green]✓[/green] Conciliado e persistido. Transação: [cyan]{resultado.item.transacao_bancaria_id}[/cyan]")
+        else:
+            console.print(f"[yellow]Conciliado, mas já vinculado por outra execução ({resultado.motivo_nao_persistido}).[/yellow]")
+    else:
+        console.print(f"[yellow]Status: {resultado.item.status.value} ({resultado.item.metodo.value}) — nenhum vínculo persistido.[/yellow]")
+
 # =============================================================
 
 def _listar_arquivos(caminho: Path) -> list[Path]:
