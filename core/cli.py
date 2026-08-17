@@ -933,14 +933,17 @@ def conciliacao_executar(
         transacoes = uow.transacoes_bancarias.listar_por_empresa_e_periodo(
             empresa_id, data_inicio, data_fim
         )
+        # DT-CC-03 (ADR 010): data_inicio/data_fim passados nativamente ao
+        # repositório — o filtro de período acontece na query SQL, antes
+        # do limit=100, não depois de um fetch já truncado em Python.
+        # Antes desta correção, uma empresa com mais de 100 lançamentos
+        # aprovados (independente do período) podia ter lançamentos
+        # relevantes do período cortados pelo limit antes mesmo do filtro
+        # de data ser aplicado.
         lancamentos = uow.lancamentos.listar_por_empresa(
-            empresa_id, status=StatusLancamento.APROVADO
+            empresa_id, status=StatusLancamento.APROVADO,
+            data_inicio=data_inicio, data_fim=data_fim,
         )
-        lancamentos = [
-            lanc for lanc in lancamentos
-            if lanc.data_lancamento
-            and data_inicio <= lanc.data_lancamento <= data_fim
-        ]
 
         # Fase 6, B6-2 (ADR 010): exclui compras individuais de cartão
         # (D7) da lista de candidatos — nunca via categoria/valor/data,
