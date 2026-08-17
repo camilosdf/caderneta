@@ -23,6 +23,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -469,6 +470,16 @@ class CompraCartaoORM(Base):
 
     posicao_linha: Mapped[int] = mapped_column(Integer, nullable=False)
     hash_linha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # DT-CC-02 (ADR 010): persiste core.domain.entities.ConfidenceScore
+    # (Fase 2 — extração/classificação). Dois campos, não um float solto,
+    # porque ConfidenceScore carrega valor E a qual campo da extração ele
+    # se refere (campo); sem confidence_campo o dado seria persistido
+    # incompleto. Ambos NULL juntos = sem score (item não passou por
+    # classificação com confiança, ou a origem não a reportou); um NULL e
+    # outro não é estado inconsistente (ver _item_para_dominio).
+    confidence_valor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence_campo: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -28,6 +28,7 @@ from core.domain.entities import (
     CodigoConta,
     CompraCartao,
     ConciliacaoItem,
+    ConfidenceScore,
     Dinheiro,
     FaturaCartao,
     StatusFechamentoFatura,
@@ -248,6 +249,8 @@ def _item_para_orm(item: CompraCartao, fatura_id: str) -> CompraCartaoORM:
         posicao_linha=item.posicao_linha,
         hash_linha=item.hash_linha,
         criado_em=item.criado_em,
+        confidence_valor=item.confidence.valor if item.confidence else None,
+        confidence_campo=item.confidence.campo if item.confidence else None,
     )
 
 
@@ -267,7 +270,11 @@ def _item_para_dominio(orm: CompraCartaoORM) -> CompraCartao:
         posicao_linha=orm.posicao_linha,
         hash_linha=orm.hash_linha,
         criado_em=orm.criado_em,
-        confidence=None,  # não persistido nesta fase — ver Ambiguidade no relatório da Fase 4
+        confidence=(
+            ConfidenceScore(valor=orm.confidence_valor, campo=orm.confidence_campo)
+            if orm.confidence_valor is not None and orm.confidence_campo is not None
+            else None
+        ),
     )
 
 
