@@ -159,6 +159,9 @@ class LancamentoORM(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="rascunho", index=True)
     nivel_aprovacao: Mapped[str | None] = mapped_column(String(20), nullable=True)
     pre_aprovado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Autoria (Gate 0 — D1). Nullable: ausência = origem desconhecida,
+    # tratada como falha fechada por PolicyEngine.avaliar_aprovacao().
+    criado_por: Mapped[str | None] = mapped_column(String(100), nullable=True)
     aprovado_por_1: Mapped[str | None] = mapped_column(String(100), nullable=True)
     aprovado_em_1: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     aprovado_por_2: Mapped[str | None] = mapped_column(String(100), nullable=True)

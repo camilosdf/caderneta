@@ -475,6 +475,13 @@ class Lancamento:
     exportado_em: datetime | None = None
 
     criado_em: datetime = field(default_factory=_agora)
+    # Autoria do lançamento (Gate 0 — D1, ADR 008 §9). Proveniência, não
+    # identidade autenticada, quando originado do pipeline (ver
+    # ProcessarDocumentoUseCase); UUID de Usuario quando originado de
+    # criação humana autenticada (fluxo futuro — ainda não implementado).
+    # None significa origem desconhecida — PolicyEngine.avaliar_aprovacao()
+    # nega aprovação nesse caso (falha fechada).
+    criado_por: str | None = None
 
     def validar(self) -> None:
         """Verifica a invariante de partidas dobradas."""

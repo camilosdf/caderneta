@@ -524,6 +524,24 @@ class TestPersistenciaPipeline:
             lancs = uow.lancamentos.listar_por_empresa(empresa_id)
             assert len(lancs) == 2
 
+    def test_lancamento_criado_por_reflete_usuario_do_comando(self, use_case, csv_nubank, sf):
+        """Gate 0 — D1. cmd.usuario (proveniência do pipeline, não
+        identidade autenticada) precisa ficar registrado em criado_por —
+        sem isso, PolicyEngine.avaliar_aprovacao() nega toda aprovação
+        (falha fechada, origem_desconhecida)."""
+        from core.infra.unit_of_work import UnitOfWork
+        from shared.identifiers import empresa_id_from_string
+
+        use_case.executar(ComandoProcessarDocumento(
+            filepath=csv_nubank, usuario="operador-financeiro", empresa_id="empresa-001",
+        ))
+
+        with UnitOfWork(sf) as uow:
+            empresa_id = empresa_id_from_string("empresa-001")
+            lancs = uow.lancamentos.listar_por_empresa(empresa_id)
+            assert len(lancs) == 2
+            assert all(l.criado_por == "operador-financeiro" for l in lancs)
+
     def test_lancamento_status_exportado_apos_csv_gerado(self, use_case, csv_nubank, sf):
         from core.domain.entities import StatusLancamento
         from core.infra.unit_of_work import UnitOfWork

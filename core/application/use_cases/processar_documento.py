@@ -182,6 +182,15 @@ class ProcessarDocumentoUseCase:
                             f"Lançamento de '{doc.nome_emitente}' requer revisão: {e}"
                         )
 
+                    # Gate 0 — D1: autoria do lançamento. cmd.usuario é
+                    # proveniência operacional (texto livre de --usuario na
+                    # CLI, sem validação contra a tabela usuarios) — não é
+                    # identidade autenticada. Suficiente para que a fila de
+                    # aprovação (Interface Web) nunca veja criado_por vazio,
+                    # e para auditoria de origem; não deve ser tratado como
+                    # prova de identidade humana forte.
+                    lancamento.criado_por = cmd.usuario
+
                     politica = self._policy.avaliar_pre_aprovacao(
                         confidence=lancamento.confidence or 0.0,
                         valor=lancamento.valor_total.valor,

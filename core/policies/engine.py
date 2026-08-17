@@ -78,7 +78,8 @@ class PolicyEngine:
         self,
         valor_lancamento: Decimal,
         aprovador: Usuario,
-        criador_id: str,
+        criador_id: str | None,
+        aprovador_nivel1_id: str | None = None,
     ) -> AvaliacaoPolitica:
         """
         Verifica se o aprovador pode aprovar este lançamento.
@@ -88,6 +89,22 @@ class PolicyEngine:
         anterior deste método recebia um nivel_atual: int que o chamador
         podia definir livremente sem nenhuma verificação de papel
         (achado registrado no ADR 008, corrigido no W3).
+
+        criador_id é None quando a autoria do lançamento é desconhecida
+        (Gate 0 — D1). Antes, o chamador convertia essa ausência em ""
+        e a segregação de funções nunca disparava, porque "" nunca é
+        igual a um Usuario.id — o controle existia no motor, mas estava
+        inoperante na prática (achado do Gate 0, D1). Falha fechada: sem
+        autoria conhecida, nenhuma aprovação humana é autorizada.
+
+        aprovador_nivel1_id é o id de quem já aprovou o nível 1 (None se
+        esta é a primeira aprovação, ou se nivel_aprovacao=UM_APROVADOR).
+        Gate 0 — B3: antes desta checagem, o endpoint HTTP nunca chamava
+        Lancamento.aprovar() e sempre marcava APROVADO na primeira
+        chamada — DOIS_APROVADORES nunca era, na prática, exigido, e o
+        mesmo ator poderia ocupar os dois níveis se a cascata fosse
+        corrigida sem esta regra (achado levantado durante a revisão do
+        Gate 0, antes de qualquer exploração real).
         """
         # Política: papel precisa ter a capacidade de aprovar, ponto de partida
         if not aprovador.pode_aprovar():
@@ -101,6 +118,20 @@ class PolicyEngine:
                                "supervisor ou admin.",
             )
 
+        # Política: origem do lançamento desconhecida — falha fechada.
+        # Distinta de segregação de funções: aqui não há identidade
+        # nenhuma para comparar, então não há base para aprovar.
+        if criador_id is None:
+            return AvaliacaoPolitica(
+                resultado=ResultadoPolitica.BLOQUEADO,
+                politica_nome="origem_desconhecida",
+                versao_politica=self._versao,
+                motivo="Origem do lançamento não identificada — aprovação "
+                       "não pode ser autorizada sem autoria conhecida.",
+                acao_requerida="Registrar a autoria do lançamento "
+                               "(criado_por) antes de submeter para aprovação.",
+            )
+
         # Política: segregação de funções
         if str(aprovador.id) == criador_id:
             return AvaliacaoPolitica(
@@ -109,6 +140,19 @@ class PolicyEngine:
                 versao_politica=self._versao,
                 motivo="O criador do lançamento não pode ser o mesmo aprovador.",
                 acao_requerida="Designar aprovador diferente do criador.",
+            )
+
+        # Política: segregação entre níveis de aprovação (Gate 0 — B3).
+        # DOIS_APROVADORES exige dois atores distintos, não a mesma
+        # pessoa aprovando duas vezes.
+        if aprovador_nivel1_id is not None and str(aprovador.id) == aprovador_nivel1_id:
+            return AvaliacaoPolitica(
+                resultado=ResultadoPolitica.BLOQUEADO,
+                politica_nome="segregacao_niveis_aprovacao",
+                versao_politica=self._versao,
+                motivo="O mesmo aprovador não pode ocupar os dois níveis "
+                       "de aprovação.",
+                acao_requerida="Designar um segundo aprovador diferente do primeiro.",
             )
 
         # Política: valor alto exige papel com capacidade de alto valor.

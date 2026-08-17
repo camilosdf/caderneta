@@ -111,6 +111,7 @@ def _para_orm(lanc: Lancamento, orm: LancamentoORM) -> None:
     orm.status = lanc.status.value
     orm.nivel_aprovacao = lanc.nivel_aprovacao.value if lanc.nivel_aprovacao else None
     orm.pre_aprovado = lanc.pre_aprovado
+    orm.criado_por = lanc.criado_por
     orm.aprovado_por_1 = lanc.aprovado_por_1
     orm.aprovado_em_1 = lanc.aprovado_em_1
     orm.aprovado_por_2 = lanc.aprovado_por_2
@@ -145,6 +146,7 @@ def _para_dominio(orm: LancamentoORM) -> Lancamento:
         status=StatusLancamento(orm.status),
         nivel_aprovacao=NivelAprovacao(orm.nivel_aprovacao) if orm.nivel_aprovacao else None,
         pre_aprovado=orm.pre_aprovado,
+        criado_por=orm.criado_por,
         aprovado_por_1=orm.aprovado_por_1,
         aprovado_em_1=orm.aprovado_em_1,
         aprovado_por_2=orm.aprovado_por_2,

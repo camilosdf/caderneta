@@ -54,6 +54,30 @@ class TestPolicyEngine:
         assert r.resultado == ResultadoPolitica.BLOQUEADO
         assert "segregacao" in r.politica_nome
 
+    def test_origem_desconhecida_bloqueia_mesmo_com_papel_valido(self, engine):
+        """Gate 0 — D1. criador_id=None (autoria desconhecida) é falha
+        fechada — distinto de segregação de funções, que exige uma
+        identidade conhecida para comparar."""
+        r = engine.avaliar_aprovacao(
+            valor_lancamento=Decimal("100.00"),
+            aprovador=_usuario("contador"),
+            criador_id=None,
+        )
+        assert r.resultado == ResultadoPolitica.BLOQUEADO
+        assert r.politica_nome == "origem_desconhecida"
+
+    def test_papel_sem_permissao_precede_origem_desconhecida(self, engine):
+        """Ordem das checagens: papel é avaliado antes de origem —
+        operador é bloqueado por falta de papel, não por origem, mesmo
+        com criador_id=None."""
+        r = engine.avaliar_aprovacao(
+            valor_lancamento=Decimal("100.00"),
+            aprovador=_usuario("operador"),
+            criador_id=None,
+        )
+        assert r.resultado == ResultadoPolitica.BLOQUEADO
+        assert r.politica_nome == "papel_sem_permissao"
+
     def test_alto_valor_exige_papel_com_permissao(self, engine):
         """Contador não tem pode_aprovar_alto_valor() — REQUER_ACAO."""
         r = engine.avaliar_aprovacao(
