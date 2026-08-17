@@ -117,12 +117,22 @@ class Versao:
 VERSAO = Versao.parse(VERSAO_ATUAL)
 
 
-def versao_para_audit() -> dict:
-    """Retorna dict para gravação no audit log."""
+def versao_para_audit(versao: "Versao | None" = None) -> dict:
+    """Retorna dict para gravação no audit log.
+
+    versao é opcional e usa o singleton global VERSAO por padrão — mas
+    chamadores que já têm uma Versao recém-calculada em mãos (ex.:
+    infra/scripts/release.py registrando VERSAO_HOMOLOGADA antes de
+    reescrever core/versao.py em disco) devem passá-la explicitamente.
+    O singleton global só reflete o valor gravado em VERSAO_ATUAL no
+    momento em que este processo foi iniciado — não a versão sendo
+    promovida na chamada atual.
+    """
+    v = versao if versao is not None else VERSAO
     return {
-        "versao_pep440": VERSAO.pep440,
-        "versao_exibicao": VERSAO.exibicao,
-        "etapa": VERSAO.etapa_nome,
-        "status": VERSAO.status,
-        "e_producao": VERSAO.e_producao,
+        "versao_pep440": v.pep440,
+        "versao_exibicao": v.exibicao,
+        "etapa": v.etapa_nome,
+        "status": v.status,
+        "e_producao": v.e_producao,
     }
