@@ -46,7 +46,11 @@ VERSAO_EXIBICAO = _VERSAO.exibicao  # ex: v0.003.001
 
 def _session_factory(pasta_datalake: Path):
     """Retorna SessionFactory apontando para SQLite em pasta_datalake,
-    ou para DATABASE_URL se definida (produção/PostgreSQL)."""
+    ou para DATABASE_URL se definida (produção/PostgreSQL).
+
+    Bootstrap de execução real — enforce_foreign_keys=True (DT-CC-01 /
+    ADR 011, B.2.4): ver docstring de SessionFactory.__init__.
+    """
     import os
 
     from core.infra.db.session import SessionFactory
@@ -56,7 +60,7 @@ def _session_factory(pasta_datalake: Path):
         pasta_datalake.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{pasta_datalake / 'caderneta.db'}"
 
-    factory = SessionFactory(url)
+    factory = SessionFactory(url, enforce_foreign_keys=True)
     factory.criar_tabelas()
     return factory
 

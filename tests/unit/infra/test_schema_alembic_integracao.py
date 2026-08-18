@@ -50,6 +50,7 @@ from core.domain.entities import (
 )
 from core.infra.db import SessionFactory
 from core.infra.repositories import (
+    ContaContabilRepository,
     LancamentoRepository,
     TransacaoBancariaRepository,
     UsuarioRepository,
@@ -93,7 +94,14 @@ def _sessionfactory_via_alembic(db_path: Path, monkeypatch) -> SessionFactory:
     cfg.set_main_option("sqlalchemy.url", url)
     cfg.attributes["configure_logger"] = False
     command.upgrade(cfg, "head")
-    return SessionFactory(url)
+    # DT-CC-01 / ADR 011, B.2.4 — este é o guardrail deliberado do
+    # schema migrado (ver Plano B.2.4, ressalva do usuário): a forma
+    # do schema (compare_metadata) não prova enforcement em runtime;
+    # enforce_foreign_keys=True torna a FK composta splits ->
+    # contas_contabeis e o NOT NULL de empresa_id realmente ativos
+    # aqui, ao contrário do resto da suíte hermética (default False —
+    # ver SessionFactory.__init__).
+    return SessionFactory(url, enforce_foreign_keys=True)
 
 
 @pytest.fixture
@@ -180,6 +188,65 @@ class TestSchemaGuardrail:
 
 
 # =============================================================
+# DT-CC-01 / ADR 011, B.2.4 — ENFORCEMENT REAL DA FK COMPOSTA
+# =============================================================
+
+class TestEnforcementFKCompostaB24:
+    """compare_metadata (TestSchemaGuardrail acima) só prova a FORMA do
+    schema — que a FK composta e o NOT NULL existem como constraints.
+    Não prova que algo os aplica em runtime (ressalva explícita do
+    Plano B.2.4: enforce_foreign_keys=False não pode ser confundido
+    com ausência de integridade — o contrato definitivo é o schema
+    migrado, demonstrado aqui como realmente ativo)."""
+
+    def test_conta_nao_cadastrada_e_rejeitada(self, sf) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        empresa_id = uuid4()
+        lanc = _lancamento(empresa_id)  # conta_codigo nunca cadastrado nesta empresa
+        with pytest.raises(IntegrityError, match="FOREIGN KEY"):
+            with sf.session() as session:
+                LancamentoRepository(session).salvar(lanc)
+
+    def test_empresa_id_nulo_e_rejeitado(self, sf) -> None:
+        from datetime import datetime, timezone
+
+        from sqlalchemy.exc import IntegrityError
+
+        from core.infra.db.models import LancamentoORM, SplitORM
+
+        empresa_id = uuid4()
+        _cadastrar_contas_padrao(sf, empresa_id)
+
+        lanc_orm = LancamentoORM(
+            id=str(uuid4()), empresa_id=str(empresa_id),
+            criado_em=datetime.now(timezone.utc), descricao="teste NOT NULL",
+        )
+        split_orm = SplitORM(
+            id=str(uuid4()), lancamento_id=lanc_orm.id, empresa_id=None,
+            conta_codigo="4.1.01.001", natureza="debito", valor=Decimal("10.00"),
+            moeda="BRL",
+        )
+        with pytest.raises(IntegrityError, match="NOT NULL"):
+            with sf.session() as session:
+                session.add(lanc_orm)
+                session.add(split_orm)
+
+    def test_conta_cadastrada_e_aceita(self, sf) -> None:
+        empresa_id = uuid4()
+        _cadastrar_contas_padrao(sf, empresa_id)
+        lanc = _lancamento(empresa_id)
+
+        with sf.session() as session:
+            LancamentoRepository(session).salvar(lanc)
+
+        with sf.session() as session:
+            persistido = LancamentoRepository(session).buscar_por_id(lanc.id)
+            assert persistido is not None
+            assert len(persistido.splits) == 2
+
+
+# =============================================================
 # B2.9 — AUTENTICAÇÃO, RBAC E APROVAÇÃO (D1/B3) CONTRA SCHEMA REAL
 # =============================================================
 
@@ -213,6 +280,7 @@ class TestFluxosCriticosContraSchemaMigrado:
                                 nome="X", papel="contador")
             UsuarioRepository(session).criar(contador, senha_hash=hash_senha("Senha123!"))
 
+        _cadastrar_contas_padrao(sf, empresa_id)
         lanc = _lancamento(empresa_id, criado_por=str(contador.id))
         with sf.session() as session:
             LancamentoRepository(session).salvar(lanc)
@@ -234,6 +302,7 @@ class TestFluxosCriticosContraSchemaMigrado:
             repo.criar(Usuario(empresa_id=empresa_id, email="y@x.com", nome="Y", papel="supervisor"),
                        senha_hash=hash_senha("Senha123!"))
 
+        _cadastrar_contas_padrao(sf, empresa_id)
         lanc = _lancamento(empresa_id, nivel_aprovacao=NivelAprovacao.DOIS_APROVADORES)
         with sf.session() as session:
             LancamentoRepository(session).salvar(lanc)
@@ -329,6 +398,24 @@ class TestConciliacaoContraSchemaMigrado:
 # =============================================================
 # HELPERS
 # =============================================================
+
+def _cadastrar_contas_padrao(sf: SessionFactory, empresa_id) -> None:
+    """DT-CC-01 / ADR 011, B.2.4 — a FK composta splits ->
+    contas_contabeis está ativa neste schema (enforce_foreign_keys=True
+    nesta fixture, ver _sessionfactory_via_alembic). Os dois códigos
+    usados por _lancamento() precisam estar cadastrados antes de
+    qualquer persistência via LancamentoRepository, achado durante a
+    Fase 3 do Plano B.2.4 (não fazia parte do raio de impacto medido
+    na Fase 1 porque, naquele experimento, a FK só existia no modelo
+    ORM — nenhuma migration a materializava ainda no schema migrado
+    usado por este arquivo)."""
+    with sf.session() as session:
+        repo = ContaContabilRepository(session)
+        repo.criar(empresa_id, "4.1.01.001", "Despesa (teste schema Alembic)",
+                   natureza=NaturezaLancamento.DEBITO)
+        repo.criar(empresa_id, "1.1.01.002", "Ativo (teste schema Alembic)",
+                   natureza=NaturezaLancamento.CREDITO)
+
 
 def _lancamento(
     empresa_id, valor="1000.00", data=date(2026, 6, 1), criado_por="operador",

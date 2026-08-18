@@ -17,7 +17,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Optional
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
@@ -42,7 +42,32 @@ class SessionFactory:
         echo: bool = False,
         pool_size: int = 5,
         max_overflow: int = 10,
+        enforce_foreign_keys: bool = False,
     ) -> None:
+        """
+        enforce_foreign_keys (DT-CC-01 / ADR 011, B.2.4): ativa
+        `PRAGMA foreign_keys=ON` por conexão, apenas para SQLite —
+        SQLite não aplica FK por padrão (achado da auditoria prévia a
+        B.2.4: `test_processar_fatura_cartao_fase4.py`, achado 1).
+        PostgreSQL sempre aplica FK nativamente, com ou sem esta flag —
+        aqui ela é no-op para esse dialeto.
+
+        Default False para preservar o comportamento da suíte de
+        testes hermética, que constrói lançamentos/splits com códigos
+        de conta arbitrários não cadastrados em `contas_contabeis` —
+        ativar globalmente quebra ~126 testes fora do domínio de
+        DT-CC-01 (ver Fase 1 do Plano B.2.4). True apenas nos dois
+        bootstraps de execução real (`session_factory_from_env()` e
+        `core/cli.py::_session_factory()`) e no fixture do guardrail
+        de schema migrado.
+
+        Esta flag é uma adaptação de enforcement para SQLite, não um
+        mecanismo de segurança contábil equivalente à FK do
+        PostgreSQL. O contrato de integridade definitivo é o schema
+        migrado (Alembic) — `enforce_foreign_keys=False` nunca deve
+        ser interpretado como autorização para produção sem
+        integridade referencial.
+        """
         # SQLite não suporta pool_size/max_overflow
         connect_args: dict = {}
         engine_kwargs: dict = {"echo": echo}
@@ -58,6 +83,14 @@ class SessionFactory:
             connect_args=connect_args,
             **engine_kwargs,
         )
+
+        if enforce_foreign_keys and url.startswith("sqlite"):
+            @event.listens_for(self._engine, "connect")
+            def _ativar_fk_sqlite(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
         self._session_factory = sessionmaker(
             bind=self._engine,
             autocommit=False,
@@ -104,9 +137,13 @@ def session_factory_from_env() -> Optional[SessionFactory]:
     """Cria SessionFactory a partir da variável DATABASE_URL.
 
     Retorna None se DATABASE_URL não estiver definida.
+
+    Bootstrap de execução real (usada por api/main.py e
+    api/dependencies.py) — enforce_foreign_keys=True (DT-CC-01 / ADR
+    011, B.2.4): ver docstring de SessionFactory.__init__.
     """
     import os
     url = os.getenv("DATABASE_URL")
     if not url:
         return None
-    return SessionFactory(url)
+    return SessionFactory(url, enforce_foreign_keys=True)

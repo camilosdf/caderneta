@@ -25,6 +25,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Numeric,
     String,
@@ -107,13 +108,13 @@ class SplitORM(Base):
         String(36), ForeignKey("lancamentos.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    # DT-CC-01 / ADR 011 (B.2.1) — denormalizado de LancamentoORM.empresa_id,
-    # necessário para a FK composta (empresa_id, conta_codigo) -> contas_contabeis
-    # que será ativada em B.2.4. Nullable nesta etapa: schema e cadastro
-    # apenas, sem FK ainda, sem backfill ainda (B.2.2/B.2.3). Nunca é
-    # aceito como parâmetro independente na persistência — sempre
-    # derivado de lancamento.empresa_id (ver LancamentoRepository, B.2.2).
-    empresa_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # DT-CC-01 / ADR 011 (B.2.1/B.2.4) — denormalizado de
+    # LancamentoORM.empresa_id. NOT NULL + FK composta ativadas em
+    # B.2.4, depois de backfill (B.2.2) e cadastro das contas já em
+    # uso (B.2.3). Nunca é aceito como parâmetro independente na
+    # persistência — sempre derivado de lancamento.empresa_id (ver
+    # LancamentoRepository, B.2.2).
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
 
     conta_codigo: Mapped[str] = mapped_column(String(20), nullable=False)
     natureza: Mapped[str] = mapped_column(String(10), nullable=False)   # debito | credito
@@ -121,6 +122,19 @@ class SplitORM(Base):
     moeda: Mapped[str] = mapped_column(String(3), nullable=False, default="BRL")
     centro_custo: Mapped[str | None] = mapped_column(String(50), nullable=True)
     descricao: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # DT-CC-01 / ADR 011 (B.2.4) — FK composta contra contas_contabeis,
+    # satisfeita pela UniqueConstraint(empresa_id, codigo) criada em
+    # B.2.1. Enforcement real depende de SessionFactory(
+    # enforce_foreign_keys=True) no SQLite (ver session.py); no
+    # PostgreSQL é sempre aplicada nativamente.
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["empresa_id", "conta_codigo"],
+            ["contas_contabeis.empresa_id", "contas_contabeis.codigo"],
+            name="fk_splits_conta_contabil",
+        ),
+    )
 
     # Relacionamento
     lancamento: Mapped["LancamentoORM"] = relationship("LancamentoORM", back_populates="splits")
@@ -274,12 +288,12 @@ class CentroCustoORM(Base):
 class ContaContabilORM(Base):
     """Persiste ContaContabil — cadastro do Plano de Contas (DT-CC-01, ADR 011).
 
-    B.2.1 — só cadastro nesta etapa. A FK composta
-    (SplitORM.empresa_id, SplitORM.conta_codigo) ->
-    (ContaContabilORM.empresa_id, ContaContabilORM.codigo) é ativada em
-    B.2.4, depois de backfill (B.2.2) e cadastro das contas já em uso
-    (B.2.3). Mesmo padrão de CentroCustoORM: unicidade por
-    (empresa_id, codigo), não um id semântico.
+    A FK composta (SplitORM.empresa_id, SplitORM.conta_codigo) ->
+    (ContaContabilORM.empresa_id, ContaContabilORM.codigo) está ativa
+    desde B.2.4 (ver SplitORM.__table_args__), habilitada por
+    backfill (B.2.2) e cadastro das contas já em uso (B.2.3). Mesmo
+    padrão de CentroCustoORM: unicidade por (empresa_id, codigo), não
+    um id semântico.
     """
 
     __tablename__ = "contas_contabeis"

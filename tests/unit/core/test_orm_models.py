@@ -122,10 +122,17 @@ class TestLancamentoORM:
             data_lancamento=date(2024, 3, 15),
         )
 
-    def _split(self, lancamento_id: str, natureza: str, conta: str) -> SplitORM:
+    def _split(
+        self, lancamento_id: str, natureza: str, conta: str, empresa_id: str = "emp-001",
+    ) -> SplitORM:
+        # DT-CC-01 / ADR 011, B.2.4 — empresa_id agora NOT NULL em
+        # SplitORM. "emp-001" é o mesmo empresa_id usado por
+        # _lancamento() nesta classe, consistente com a invariante de
+        # que SplitORM.empresa_id é sempre derivado do lançamento pai.
         return SplitORM(
             id=f"split-{natureza}-{conta}",
             lancamento_id=lancamento_id,
+            empresa_id=empresa_id,
             conta_codigo=conta,
             natureza=natureza,
             valor=Decimal("100.00"),

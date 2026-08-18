@@ -1,7 +1,9 @@
 """ContaContabilRepository — persistência de ContaContabil (DT-CC-01, ADR 011).
 
-B.2.1 — cadastro apenas. Sem FK ativa ainda (ver ContaContabilORM,
-core/infra/db/models.py, e ADR 011 para a sequência B.2.1-B.2.4).
+Desde B.2.4, é o lado referenciado da FK composta ativa em
+SplitORM (empresa_id, conta_codigo) -> (empresa_id, codigo) — ver
+ContaContabilORM, core/infra/db/models.py, e ADR 011 para a sequência
+B.2.1-B.2.4.
 
 Responsabilidade: converter entre ContaContabil (domínio) e
 ContaContabilORM (banco), e executar queries por código/empresa. Mesmo
