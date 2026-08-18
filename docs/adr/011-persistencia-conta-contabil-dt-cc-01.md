@@ -3,7 +3,7 @@
 **Status:** Em aberto — decisão pendente entre Opção A e Opção B (ver Seção "Decisão"). Nenhuma implementação autorizada por este documento.
 **Data:** 2026-08
 **Decisores:** Direção do projeto
-**Origem:** DT-CC-01 (ADR 010, Seção "Débito técnico registrado — DT-CC-01"), aprofundado em `docs/adr/revisao-deliberativa-dtcc-d18.md` e na inspeção formal DT-CC-01.1 (branch `feature/cartao-credito`, HEAD `e710d63`).
+**Origem:** DT-CC-01 (ADR 010, Seção "Débito técnico registrado — DT-CC-01"), aprofundado em `docs/adr/revisao-deliberativa-dtcc-d18.md`, na inspeção formal DT-CC-01.1 (branch `feature/cartao-credito`, HEAD `e710d63`), no inventário de código-fonte DT-CC-01.2 e no achado de estado de produção DT-CC-01.3 (ambos abaixo).
 **Branch:** `feature/cartao-credito` — não mesclado em `main`
 
 ---
@@ -51,6 +51,33 @@ como efeito colateral.
 
 ---
 
+## DT-CC-01.2 — Inventário de código-fonte (sem alteração de código)
+
+Todas as origens de `conta_codigo`/`CodigoConta` no sistema, não só cartão:
+
+| Fonte | Arquivo | Natureza |
+|---|---|---|
+| Motor tributário | `core/rule_engine/tax_engine.py:139-155` | Catálogo fixo hardcoded — `CONTAS_TRIBUTARIAS_PADRAO`, 8 códigos em dict Python |
+| Regras de classificação | `core/cli.py:81-105` | Carregadas de `dados/regras/regras_padrao.json` — arquivo opcional, **fora do controle de versão** (não existe no repo) |
+| Fallback de classificação | `core/rule_engine/classification_impl.py:41-42` | Configurável por construtor, livre |
+| Cartão — conta do cartão (D6) | `core/cli.py:1136` | Persistida em `CartaoCreditoORM.conta_codigo`, atribuída como string livre na primeira identificação |
+| Cartão — despesas/banco/estorno | `core/cli.py:1261-1280` | 8 parâmetros de CLI, **não persistidos**, redigitados a cada execução |
+| Parsers (NF-e, OFX, CSV, Nubank) | `core/parsers/` | Nenhuma referência a conta — não decidem conta |
+
+`CodigoConta.__post_init__` valida só formato (1-5 níveis numéricos). Não há catálogo central editável nem validação de existência em nenhum ponto. **Formato válido ≠ conta cadastrada ≠ conta contabilmente válida.**
+
+## DT-CC-01.3 — Achado de estado de produção (sem alteração de código)
+
+O inventário de valores de `conta_codigo` efetivamente persistidos exigiria consulta a uma base real. Diagnóstico na VM de homologação (`caderneta-test`) confirmou: `DATABASE_URL` aponta para um Postgres local (`postgresql+psycopg://...localhost:5432/caderneta`) que **não está instalado nem em execução** nesse ambiente (sem unit systemd, sem cluster, sem container) — só o cliente `psql`.
+
+Questionada diretamente, a Direção do projeto confirmou: **não existe base de produção real em uso hoje**, em nenhum ambiente — o sistema está exclusivamente em homologação/desenvolvimento (`feature/cartao-credito`, não mesclada a `main`).
+
+**Efeito sobre a avaliação de risco da Opção B:** o principal risco atribuído à Opção B — migração de histórico de `conta_codigo` já em produção, com possíveis códigos órfãos — **não se materializa hoje**, por ausência do próprio histórico produtivo a migrar. A implementação da Opção B, se autorizada agora, seria essencialmente greenfield: catálogo e FK podem ser definidos antes de existir dado real a conciliar.
+
+Isso **não elimina** o impacto arquitetural da Opção B — `Split.conta_codigo` continua sendo usado por todo lançamento do sistema (NF-e, OFX, CSV, cartão), e uma FK obrigatória é um compromisso de modelo permanente daqui em diante, independente de haver ou não dado histórico agora. Também não é uma condição permanente: se o sistema for para produção antes de uma decisão sobre DT-CC-01, esta seção deixa de refletir o estado real e precisa ser reverificada antes de qualquer implementação de Opção B.
+
+---
+
 ## Decisão
 
 **Ainda não tomada.** Este ADR registra duas alternativas tecnicamente
@@ -84,26 +111,34 @@ Tudo da Opção A, mais `SplitORM.conta_codigo` como chave estrangeira
 obrigatória para `contas_contabeis`.
 
 - **Resolve:** a lacuna de integridade referencial por completo.
-- **Exige:** inventário de todo `conta_codigo` já em uso em produção
-  (todos os tipos de lançamento, não só cartão), migração de dados para
-  popular `contas_contabeis` a partir desse histórico, validação de
-  ausência de códigos órfãos, e só então a constraint.
-- **Risco de regressão:** Alto — toca o núcleo contábil usado por todos
-  os fluxos do sistema, não uma tabela isolada.
-- **Impacto arquitetural:** Alto — muda o modelo, não é "uma tabela a
-  mais".
-- **Isolável:** Não.
+- **Exige (se houver produção com histórico):** inventário de todo
+  `conta_codigo` já em uso, migração de dados para popular
+  `contas_contabeis` a partir desse histórico, validação de ausência de
+  códigos órfãos, e só então a constraint.
+- **Risco de regressão — condicional, ver DT-CC-01.3:** confirmado hoje
+  (Direção, DT-CC-01.3) que **não existe produção real em uso** — logo o
+  risco de migração de histórico/órfãos, que classificava este item como
+  Alto, **não se materializa no estado atual**. Reavaliar antes de
+  qualquer produção real existir.
+- **Impacto arquitetural:** Alto, independente de dado histórico — toca
+  o núcleo contábil usado por todos os fluxos do sistema (`Split`, logo
+  NF-e/OFX/CSV/cartão), é um compromisso de modelo permanente daqui em
+  diante.
+- **Isolável:** Não, arquiteturalmente (toca `SplitORM` e todo consumidor
+  de `Split.conta_codigo`) — mas hoje, sem histórico a migrar, a
+  implementação em si é tecnicamente mais simples que uma migração de
+  legado.
 
 ### Tabela comparativa
 
 | | Opção A | Opção B |
 |---|---|---|
 | Resolve DT-CC-01 por completo | Não | Sim |
-| Risco de regressão | Baixo | Alto |
-| Impacto arquitetural | Baixo | Alto |
-| Isolável | Sim | Não |
-| Migração de dados históricos | Não | Sim |
-| Exige ADR próprio para execução | Este documento basta | Sim, plano de migração de dados detalhado antes de implementar |
+| Risco de regressão | Baixo | **Baixo hoje** (sem produção — DT-CC-01.3) / Alto se já houver produção com histórico |
+| Impacto arquitetural | Baixo | Alto (independente de haver dado histórico) |
+| Isolável | Sim | Não, arquiteturalmente — mas sem histórico a migrar hoje |
+| Migração de dados históricos | Não | Não hoje (sem produção) — Sim, se produção existir antes da implementação |
+| Exige ADR próprio para execução | Este documento basta | Este documento basta **enquanto a condição de DT-CC-01.3 se mantiver**; se houver produção real antes da implementação, exige plano de migração de dados detalhado à parte |
 
 ### Registrado explicitamente
 
@@ -137,5 +172,11 @@ módulos que geram `Lancamento` (NF-e, OFX, CSV, cartão).
 ## Decisão necessária da Direção
 
 Escolher: Opção A (isolada, correção parcial, registrada como tal) |
-Opção B (abrir plano de migração de dados antes de implementar) |
+Opção B (hoje, greenfield — sem plano de migração de dados necessário,
+condicionado à ausência de produção confirmada em DT-CC-01.3) |
 manter DT-CC-01 em deliberação sem prazo definido.
+
+Se a decisão for adiada e o sistema for para produção antes de uma
+implementação, a condição de DT-CC-01.3 deve ser reverificada — a
+avaliação de risco da Opção B registrada aqui deixa de valer assim que
+existir histórico produtivo de `conta_codigo`.
