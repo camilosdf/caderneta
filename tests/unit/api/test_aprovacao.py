@@ -25,7 +25,8 @@ from core.domain.entities import (
     Usuario,
 )
 from core.infra.db import SessionFactory
-from core.infra.repositories import LancamentoRepository, UsuarioRepository
+from core.infra.repositories import ContaContabilRepository, LancamentoRepository, UsuarioRepository
+from core.infra.repositories.conta_contabil_repository import ContaContabilJaExisteError
 
 
 @pytest.fixture
@@ -51,6 +52,27 @@ def _usuario(sf: SessionFactory, empresa_id, papel: str, email=None, senha="Senh
     return u
 
 
+def _cadastrar_contas_padrao(sf: SessionFactory, empresa_id) -> None:
+    """DT-CC-01 / ADR 011, B.2.4 — a FK composta splits ->
+    contas_contabeis passou a ser exercitada de verdade aqui: o fixture
+    `client` sobe a app real via create_app()/session_factory_from_env()
+    (enforce_foreign_keys=True), e o endpoint de aprovação reescreve os
+    splits do lançamento. Os dois códigos usados por _lancamento()
+    precisam estar cadastrados antes de qualquer requisição autenticada
+    que toque o lançamento — idempotente por empresa_id (chamada uma
+    vez por _lancamento(), sempre a mesma dupla de códigos)."""
+    with sf.session() as session:
+        repo = ContaContabilRepository(session)
+        for codigo, natureza in (
+            ("4.1.01.001", NaturezaLancamento.DEBITO),
+            ("1.1.01.002", NaturezaLancamento.CREDITO),
+        ):
+            try:
+                repo.criar(empresa_id, codigo, f"Conta teste {codigo}", natureza=natureza)
+            except ContaContabilJaExisteError:
+                pass
+
+
 def _lancamento(
     sf: SessionFactory, empresa_id, valor="1000.00", status=StatusLancamento.PENDENTE,
     criado_por="operador", nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
@@ -58,6 +80,7 @@ def _lancamento(
     """criado_por default = "operador": representa a proveniência real que
     o pipeline grava hoje (Gate 0 — D1). Testes que precisam do cenário de
     origem desconhecida passam criado_por=None explicitamente."""
+    _cadastrar_contas_padrao(sf, empresa_id)
     lanc = Lancamento(
         empresa_id=empresa_id,
         descricao="Teste aprovação",

@@ -31,6 +31,10 @@ from core.domain.entities import (
     TransacaoBancaria,
 )
 from core.infra.db.session import SessionFactory
+from core.infra.repositories.conta_contabil_repository import (
+    ContaContabilJaExisteError,
+    ContaContabilRepository,
+)
 from core.infra.unit_of_work import UnitOfWork
 from shared.identifiers import empresa_id_from_string
 
@@ -54,6 +58,28 @@ def _session_factory_arquivo(datalake: Path) -> SessionFactory:
     sf = SessionFactory(f"sqlite:///{datalake / 'caderneta.db'}")
     sf.criar_tabelas()
     return sf
+
+
+def _cadastrar_contas_padrao(sf: SessionFactory, empresa_id) -> None:
+    """DT-CC-01 / ADR 011, B.2.4 — `cartao gerar-lancamentos` e `cartao
+    conciliar-pagamento` rodam via CliRunner contra o bootstrap real do
+    CLI (core/cli.py::_session_factory()), que agora tem
+    enforce_foreign_keys=True. Os códigos de conta usados pelos
+    comandos (--conta-cartao/--conta-banco/--conta-compra/--conta-iof)
+    precisam estar cadastrados em contas_contabeis antes da execução —
+    idempotente por empresa_id, mesma dupla/quadra de códigos sempre."""
+    with sf.session() as session:
+        repo = ContaContabilRepository(session)
+        for codigo, natureza in (
+            (CONTA_CARTAO, NaturezaLancamento.CREDITO),
+            (CONTA_BANCO, NaturezaLancamento.CREDITO),
+            (CONTA_COMPRA, NaturezaLancamento.DEBITO),
+            (CONTA_IOF, NaturezaLancamento.DEBITO),
+        ):
+            try:
+                repo.criar(empresa_id, codigo, f"Conta teste {codigo}", natureza=natureza)
+            except ContaContabilJaExisteError:
+                pass
 
 
 def _fatura_fechada(sf, empresa_id, final_numero="1234", valor_total="150.00", n_itens=1, com_iof=False):
@@ -128,6 +154,7 @@ class TestGerarLancamentosSucesso:
         sf = _session_factory_arquivo(datalake)
         empresa_id = uuid4()
         fatura_id = _fatura_fechada(sf, empresa_id)
+        _cadastrar_contas_padrao(sf, empresa_id)
 
         resultado = runner.invoke(app, _args_gerar(fatura_id, str(empresa_id), datalake))
 
@@ -152,6 +179,7 @@ class TestGerarLancamentosSucesso:
         sf = _session_factory_arquivo(datalake)
         empresa_id = uuid4()
         fatura_id = _fatura_fechada(sf, empresa_id, com_iof=True)
+        _cadastrar_contas_padrao(sf, empresa_id)
 
         resultado = runner.invoke(app, _args_gerar(fatura_id, str(empresa_id), datalake, com_iof=True))
 
@@ -200,6 +228,7 @@ class TestConciliarPagamentoSucesso:
         empresa_str = "empresa-ponto-a-4"
         empresa_id = empresa_id_from_string(empresa_str)
         fatura_id = _fatura_fechada(sf, empresa_id, valor_total="150.00")
+        _cadastrar_contas_padrao(sf, empresa_id)
 
         runner.invoke(app, _args_gerar(fatura_id, empresa_str, datalake))
 
@@ -241,6 +270,7 @@ class TestResultadoNaoConciliadoNaoEhErro:
         empresa_str = "empresa-ponto-a-5"
         empresa_id = empresa_id_from_string(empresa_str)
         fatura_id = _fatura_fechada(sf, empresa_id, valor_total="200.00")
+        _cadastrar_contas_padrao(sf, empresa_id)
 
         runner.invoke(app, _args_gerar(fatura_id, empresa_str, datalake))
         with UnitOfWork(sf) as uow:
@@ -270,6 +300,7 @@ class TestReexecucaoIdempotente:
         sf = _session_factory_arquivo(datalake)
         empresa_id = uuid4()
         fatura_id = _fatura_fechada(sf, empresa_id)
+        _cadastrar_contas_padrao(sf, empresa_id)
 
         r1 = runner.invoke(app, _args_gerar(fatura_id, str(empresa_id), datalake))
         r2 = runner.invoke(app, _args_gerar(fatura_id, str(empresa_id), datalake))
@@ -288,6 +319,7 @@ class TestReexecucaoIdempotente:
         empresa_str = "empresa-ponto-a-6b"
         empresa_id = empresa_id_from_string(empresa_str)
         fatura_id = _fatura_fechada(sf, empresa_id, valor_total="300.00")
+        _cadastrar_contas_padrao(sf, empresa_id)
 
         runner.invoke(app, _args_gerar(fatura_id, empresa_str, datalake))
         with UnitOfWork(sf) as uow:
