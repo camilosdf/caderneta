@@ -120,7 +120,9 @@ def _para_orm(lanc: Lancamento, orm: LancamentoORM) -> None:
     orm.exportado_em = lanc.exportado_em
 
     # Substitui splits existentes pelos atuais
-    orm.splits = [_split_para_orm(s, str(lanc.id)) for s in lanc.splits]
+    orm.splits = [
+        _split_para_orm(s, str(lanc.id), str(lanc.empresa_id)) for s in lanc.splits
+    ]
 
 
 def _para_dominio(orm: LancamentoORM) -> Lancamento:
@@ -158,10 +160,16 @@ def _para_dominio(orm: LancamentoORM) -> Lancamento:
     return lanc
 
 
-def _split_para_orm(split: Split, lancamento_id: str) -> SplitORM:
+def _split_para_orm(split: Split, lancamento_id: str, empresa_id: str) -> SplitORM:
+    # DT-CC-01 / ADR 011 (B.2.2) — empresa_id é sempre derivado do
+    # Lancamento pai, nunca um parâmetro independente vindo de Split
+    # (que continua sem empresa_id no domínio, por decisão explícita —
+    # ver ADR 011). Este é o único ponto de construção de SplitORM no
+    # sistema; não há outro caminho de escrita a auditar.
     return SplitORM(
         id=str(split.id),
         lancamento_id=lancamento_id,
+        empresa_id=empresa_id,
         conta_codigo=split.conta.codigo,
         natureza=split.natureza.value,
         valor=split.valor.valor,

@@ -178,29 +178,31 @@ class TestContaContabilRepository:
                 encontrada.validar_para_lancamento()
 
 
-class TestSplitEmpresaIdSchemaB21:
-    """Contrato explícito da etapa B.2.1: splits.empresa_id existe e é
-    nullable. Nenhum código ainda o popula (isso é B.2.2) e nenhuma FK
-    o usa (isso é B.2.4) — este teste documenta o estado intermediário
-    e deve ser atualizado (não removido silenciosamente) quando B.2.2
-    tornar a coluna obrigatoriamente populada."""
+class TestSplitEmpresaIdDerivadoDoLancamentoB22:
+    """Invariante da etapa B.2.2: SplitORM.empresa_id é sempre derivado
+    de LancamentoORM.empresa_id na persistência — nunca um parâmetro
+    independente. Split (domínio) continua sem empresa_id, por decisão
+    explícita registrada em ADR 011; a garantia vive inteiramente na
+    camada de persistência (_split_para_orm,
+    core/infra/repositories/lancamento_repository.py), único ponto de
+    construção de SplitORM no sistema (confirmado por grep — nenhum
+    outro import de _split_para_orm).
 
-    def test_split_sem_empresa_id_ainda_e_aceito(self, sf: SessionFactory) -> None:
+    Substitui TestSplitEmpresaIdSchemaB21 (B.2.1): a expectativa mudou
+    de "coluna existe e fica None" para "coluna sempre reflete o
+    empresa_id do Lancamento pai" — atualizado, não removido em
+    silêncio, conforme o próprio B.2.1 já previa."""
+
+    def _lancamento(self, empresa_id, descricao: str):
         from datetime import date
         from decimal import Decimal
 
-        from core.domain.entities import (
-            Dinheiro,
-            Lancamento,
-            NivelAprovacao,
-            Split,
-            StatusLancamento,
-        )
-        from core.infra.repositories import LancamentoRepository
+        from core.domain.entities import Dinheiro, Lancamento, NivelAprovacao, Split, StatusLancamento
 
-        lancamento = Lancamento(
+        return Lancamento(
+            empresa_id=empresa_id,
             data_lancamento=date(2026, 8, 18),
-            descricao="teste B.2.1",
+            descricao=descricao,
             status=StatusLancamento.APROVADO,
             nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
             splits=[
@@ -210,15 +212,68 @@ class TestSplitEmpresaIdSchemaB21:
                       valor=Dinheiro(Decimal("10.00"))),
             ],
         )
+
+    def test_split_empresa_id_reflete_o_lancamento_pai(self, sf: SessionFactory) -> None:
+        from core.infra.db.models import SplitORM
+        from core.infra.repositories import LancamentoRepository
+
+        empresa_id = uuid4()
+        lancamento = self._lancamento(empresa_id, "teste B.2.2")
         lancamento.validar()
         with sf.session() as session:
             LancamentoRepository(session).salvar(lancamento)
 
-        # Confirma via ORM direto (não via domínio, que não expõe
-        # empresa_id em Split) que a coluna existe e ficou None — B.2.1
-        # não popula, só declara o schema.
-        from core.infra.db.models import SplitORM
         with sf.session() as session:
-            orm = session.get(SplitORM, str(lancamento.splits[0].id))
-            assert orm is not None
-            assert orm.empresa_id is None
+            for split in lancamento.splits:
+                orm = session.get(SplitORM, str(split.id))
+                assert orm is not None
+                assert orm.empresa_id == str(empresa_id)
+
+    def test_splits_de_empresas_diferentes_nao_vazam_entre_si(self, sf: SessionFactory) -> None:
+        """Prova cruzada: dois Lancamento de empresas distintas salvos
+        na mesma sessão — cada Split fica com o empresa_id do seu
+        próprio Lancamento pai, nunca do outro."""
+        from core.infra.db.models import SplitORM
+        from core.infra.repositories import LancamentoRepository
+
+        empresa_a = uuid4()
+        empresa_b = uuid4()
+        lanc_a = self._lancamento(empresa_a, "empresa A")
+        lanc_b = self._lancamento(empresa_b, "empresa B")
+        lanc_a.validar()
+        lanc_b.validar()
+
+        with sf.session() as session:
+            repo = LancamentoRepository(session)
+            repo.salvar(lanc_a)
+            repo.salvar(lanc_b)
+
+        with sf.session() as session:
+            for split in lanc_a.splits:
+                orm = session.get(SplitORM, str(split.id))
+                assert orm.empresa_id == str(empresa_a)
+            for split in lanc_b.splits:
+                orm = session.get(SplitORM, str(split.id))
+                assert orm.empresa_id == str(empresa_b)
+
+    def test_resalvar_lancamento_mantem_empresa_id_correto(self, sf: SessionFactory) -> None:
+        """orm.splits é substituído por completo a cada salvar() —
+        confirma que um re-save (ex.: aprovação, mudança de status) não
+        perde nem diverge o empresa_id dos splits recriados."""
+        from core.infra.db.models import SplitORM
+        from core.infra.repositories import LancamentoRepository
+
+        empresa_id = uuid4()
+        lancamento = self._lancamento(empresa_id, "resave")
+        lancamento.validar()
+        with sf.session() as session:
+            LancamentoRepository(session).salvar(lancamento)
+
+        # Segundo save do mesmo agregado (ex.: fluxo de aprovação)
+        with sf.session() as session:
+            LancamentoRepository(session).salvar(lancamento)
+
+        with sf.session() as session:
+            for split in lancamento.splits:
+                orm = session.get(SplitORM, str(split.id))
+                assert orm.empresa_id == str(empresa_id)
