@@ -821,6 +821,102 @@ def centro_custo_ativar(
 
 
 # =============================================================
+# CONTA CONTÁBIL — DT-CC-01 / ADR 011, B.2.3
+#
+# Cadastro proativo, para uso corrente daqui em diante — pré-requisito
+# necessário para B.2.4 (FK obrigatória): sem um comando para cadastrar
+# uma conta nova, qualquer código não previamente cadastrado passaria a
+# falhar na primeira tentativa de lançamento assim que a FK for
+# ativada, sem nenhum caminho para o operador resolver isso.
+# =============================================================
+
+conta_app = typer.Typer(help="Gerencia o cadastro de contas contábeis (Plano de Contas).")
+app.add_typer(conta_app, name="conta")
+
+
+@conta_app.command(name="criar")
+def conta_criar(
+    codigo: Annotated[str, typer.Argument(help="Código da conta (ex: 4.1.01.001)")],
+    nome: Annotated[str, typer.Argument(help="Nome descritivo")],
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    natureza: Annotated[str, typer.Option("--natureza", help="debito | credito")] = "debito",
+    tipo: Annotated[str, typer.Option("--tipo")] = "",
+    nao_lancavel: Annotated[bool, typer.Option("--nao-lancavel", help="Conta sintética/agrupadora — não recebe lançamentos diretos")] = False,
+    centro_custo_obrigatorio: Annotated[bool, typer.Option("--centro-custo-obrigatorio")] = False,
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Cria uma nova conta contábil para a empresa."""
+    from core.domain.entities import NaturezaLancamento
+    from core.infra.repositories.conta_contabil_repository import ContaContabilJaExisteError
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    try:
+        natureza_enum = NaturezaLancamento(natureza)
+    except ValueError:
+        rprint(f"[red]❌ Natureza inválida: '{natureza}'. Use 'debito' ou 'credito'.[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    try:
+        with UnitOfWork(session_factory) as uow:
+            uow.contas_contabeis.criar(
+                empresa_id, codigo, nome,
+                natureza=natureza_enum, tipo=tipo,
+                permite_lancamento=not nao_lancavel,
+                centro_custo_obrigatorio=centro_custo_obrigatorio,
+            )
+            uow.commit()
+    except ContaContabilJaExisteError as e:
+        rprint(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    rprint(Panel(
+        f"[bold green]✅ Conta contábil criada[/bold green]\n\n"
+        f"Código: [cyan]{codigo}[/cyan]\n"
+        f"Nome:   [cyan]{nome}[/cyan]\n"
+        f"Natureza: [dim]{natureza}[/dim]\n"
+        f"Empresa: [dim]{empresa}[/dim]",
+        border_style="green",
+        title="Conta Contábil",
+    ))
+
+
+@conta_app.command(name="listar")
+def conta_listar(
+    empresa: Annotated[str, typer.Option("--empresa")] = "local",
+    datalake: Annotated[Path, typer.Option("--datalake")] = Path("./dados/datalake"),
+):
+    """Lista as contas contábeis cadastradas para a empresa."""
+    from core.infra.unit_of_work import UnitOfWork
+    from shared.identifiers import empresa_id_from_string
+
+    empresa_id = empresa_id_from_string(empresa)
+    session_factory = _session_factory(datalake)
+
+    with UnitOfWork(session_factory) as uow:
+        contas = uow.contas_contabeis.listar_por_empresa(empresa_id)
+
+    if not contas:
+        rprint("[dim]Nenhuma conta contábil cadastrada ainda.[/dim]")
+        return
+
+    tabela = Table(title="Contas Contábeis", show_header=True, header_style="bold")
+    tabela.add_column("Código")
+    tabela.add_column("Nome")
+    tabela.add_column("Natureza")
+    tabela.add_column("Lançável")
+
+    for c in contas:
+        lancavel_str = "[green]sim[/green]" if c.permite_lancamento else "[red]não[/red]"
+        tabela.add_row(c.codigo.codigo, c.nome, c.natureza.value, lancavel_str)
+
+    console.print(tabela)
+
+
+# =============================================================
 # HELPERS INTERNOS
 
 # =============================================================
