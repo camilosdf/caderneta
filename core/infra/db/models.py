@@ -107,6 +107,14 @@ class SplitORM(Base):
         String(36), ForeignKey("lancamentos.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
+    # DT-CC-01 / ADR 011 (B.2.1) — denormalizado de LancamentoORM.empresa_id,
+    # necessário para a FK composta (empresa_id, conta_codigo) -> contas_contabeis
+    # que será ativada em B.2.4. Nullable nesta etapa: schema e cadastro
+    # apenas, sem FK ainda, sem backfill ainda (B.2.2/B.2.3). Nunca é
+    # aceito como parâmetro independente na persistência — sempre
+    # derivado de lancamento.empresa_id (ver LancamentoRepository, B.2.2).
+    empresa_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
     conta_codigo: Mapped[str] = mapped_column(String(20), nullable=False)
     natureza: Mapped[str] = mapped_column(String(10), nullable=False)   # debito | credito
     valor: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
@@ -261,6 +269,39 @@ class CentroCustoORM(Base):
 
     def __repr__(self) -> str:
         return f"<CentroCustoORM {self.codigo} ativo={self.ativo}>"
+
+
+class ContaContabilORM(Base):
+    """Persiste ContaContabil — cadastro do Plano de Contas (DT-CC-01, ADR 011).
+
+    B.2.1 — só cadastro nesta etapa. A FK composta
+    (SplitORM.empresa_id, SplitORM.conta_codigo) ->
+    (ContaContabilORM.empresa_id, ContaContabilORM.codigo) é ativada em
+    B.2.4, depois de backfill (B.2.2) e cadastro das contas já em uso
+    (B.2.3). Mesmo padrão de CentroCustoORM: unicidade por
+    (empresa_id, codigo), não um id semântico.
+    """
+
+    __tablename__ = "contas_contabeis"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    empresa_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    codigo: Mapped[str] = mapped_column(String(20), nullable=False)
+    nome: Mapped[str] = mapped_column(String(200), nullable=False)
+    tipo: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    natureza: Mapped[str] = mapped_column(String(10), nullable=False)  # debito | credito
+    guid_gnucash: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    permite_lancamento: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    centro_custo_obrigatorio: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    conta_pai_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "codigo", name="uq_conta_contabil_empresa_codigo"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ContaContabilORM {self.codigo} {self.nome!r}>"
 
 
 class UsuarioORM(Base):
