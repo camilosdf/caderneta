@@ -5,17 +5,27 @@ de FaturaCartaoRecebida/FaturaCartaoFechada no EventBusPort, registro
 correspondente em TipoEvento (hash chain), e preservação exata do
 comportamento da Fase 2 quando session_factory/event_bus não são
 injetados (regressão).
-"""
+
+Achado de auditoria pré-B.2.4 (DT-CC-01 / ADR 011): os testes desta
+suíte originalmente chamavam ProcessarFaturaCartaoUseCase.executar com
+cartao_id=uuid4() nunca persistido como CartaoCredito.
+FaturaCartaoORM.cartao_id sempre teve FK real para cartoes_credito.id
+(ADR 010) — isso nunca falhou porque SQLite não aplica FK por padrão.
+O fluxo real (core/cli.py, comando `cartao importar`) sempre cria/
+busca o CartaoCredito primeiro e só então processa a fatura com
+cartao_id já persistido — os testes é que pulavam essa etapa. Corrigido
+aqui (_cartao_id_persistido), sem nenhuma alteração de código de
+produção: a implementação e a FK sempre estiveram corretas."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from core.application.use_cases.processar_fatura_cartao import (
     ProcessarFaturaCartaoUseCase,
 )
 from core.audit.chain import TipoEvento
-from core.domain.entities import StatusFechamentoFatura, TipoDocumento
+from core.domain.entities import CartaoCredito, CodigoConta, StatusFechamentoFatura, TipoDocumento
 from core.events.catalog import EventBusEmMemoria, FaturaCartaoFechada, FaturaCartaoRecebida
 from core.infra.db.session import SessionFactory
 from core.infra.unit_of_work import UnitOfWork
@@ -56,6 +66,24 @@ def _session_factory() -> SessionFactory:
     return sf
 
 
+def _cartao_id_persistido(sf: SessionFactory, empresa_id: UUID) -> UUID:
+    """Cria e persiste um CartaoCredito real para empresa_id, retornando
+    seu id — mesma pré-condição que o fluxo real (`cartao importar`,
+    core/cli.py) sempre satisfaz antes de chamar
+    ProcessarFaturaCartaoUseCase. FaturaCartaoORM.cartao_id tem FK real
+    para cartoes_credito.id; um cartao_id não persistido só "funcionava"
+    em teste porque SQLite não aplica FK por padrão (ver docstring do
+    módulo)."""
+    with UnitOfWork(sf) as uow:
+        cartao = CartaoCredito(
+            empresa_id=empresa_id, emissor="Nubank", final_numero="1234",
+            titular="Titular Teste", conta_codigo=CodigoConta("2.1.05.001"),
+        )
+        uow.cartoes_credito.salvar_se_novo(cartao)
+        uow.commit()
+    return cartao.id
+
+
 # =============================================================
 # PERSISTÊNCIA IDEMPOTENTE — D13
 # =============================================================
@@ -65,7 +93,8 @@ class TestPersistenciaIdempotente:
         sf = _session_factory()
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf)
-        empresa_id, cartao_id = uuid4(), uuid4()
+        empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_FECHADA)):
             resultado = uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
@@ -82,7 +111,8 @@ class TestPersistenciaIdempotente:
         sf = _session_factory()
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf)
-        empresa_id, cartao_id = uuid4(), uuid4()
+        empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_FECHADA)):
             r1 = uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
@@ -102,7 +132,8 @@ class TestPersistenciaIdempotente:
         sf = _session_factory()
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf)
-        empresa_id, cartao_id = uuid4(), uuid4()
+        empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_FECHADA)):
             uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
@@ -123,9 +154,11 @@ class TestEventosBarramento:
         bus = EventBusEmMemoria()
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf, event_bus=bus)
+        empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_FECHADA)):
-            resultado = uc.executar(Path("fatura.pdf"), empresa_id=uuid4(), cartao_id=uuid4())
+            resultado = uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
 
         tipos_publicados = [type(e) for e in bus.eventos]
         assert FaturaCartaoRecebida in tipos_publicados
@@ -139,9 +172,11 @@ class TestEventosBarramento:
         bus = EventBusEmMemoria()
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf, event_bus=bus)
+        empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_DIVERGENTE)):
-            resultado = uc.executar(Path("fatura.pdf"), empresa_id=uuid4(), cartao_id=uuid4())
+            resultado = uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
 
         tipos_publicados = [type(e) for e in bus.eventos]
         assert FaturaCartaoRecebida in tipos_publicados
@@ -155,7 +190,8 @@ class TestEventosBarramento:
         bus = EventBusEmMemoria()
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf, event_bus=bus)
-        empresa_id, cartao_id = uuid4(), uuid4()
+        empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_FECHADA)):
             uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
@@ -175,9 +211,10 @@ class TestEventosAuditoria:
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf)
         empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_FECHADA)):
-            uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=uuid4())
+            uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
 
         with UnitOfWork(sf) as uow:
             eventos = uow.audit.listar_por_empresa(str(empresa_id))
@@ -191,9 +228,10 @@ class TestEventosAuditoria:
         detector = _detector_mock()
         uc = ProcessarFaturaCartaoUseCase(detector=detector, session_factory=sf)
         empresa_id = uuid4()
+        cartao_id = _cartao_id_persistido(sf, empresa_id)
 
         with patch("pdfplumber.open", return_value=_pdfplumber_mock(_TEXTO_FATURA_DIVERGENTE)):
-            uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=uuid4())
+            uc.executar(Path("fatura.pdf"), empresa_id=empresa_id, cartao_id=cartao_id)
 
         with UnitOfWork(sf) as uow:
             eventos = uow.audit.listar_por_empresa(str(empresa_id))
