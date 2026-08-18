@@ -17,7 +17,13 @@ from typing import Optional
 
 from core.infra.db.session import SessionFactory
 from core.infra.repositories.audit_repository import AuditRepository
+from core.infra.repositories.cartao_repository import (
+    CartaoCreditoRepository,
+    FaturaCartaoRepository,
+    PagamentoFaturaCartaoRepository,
+)
 from core.infra.repositories.centro_custo_repository import CentroCustoRepository
+from core.infra.repositories.conta_contabil_repository import ContaContabilRepository
 from core.infra.repositories.documento_repository import DocumentoRepository
 from core.infra.repositories.lancamento_repository import LancamentoRepository
 from core.infra.repositories.periodo_contabil_repository import PeriodoContabilRepository
@@ -27,8 +33,8 @@ from core.infra.repositories.usuario_repository import UsuarioRepository
 
 class UnitOfWork:
     """Agrupa DocumentoRepository, LancamentoRepository, AuditRepository,
-    PeriodoContabilRepository, CentroCustoRepository e UsuarioRepository
-    em uma única transação.
+    PeriodoContabilRepository, CentroCustoRepository, ContaContabilRepository
+    e UsuarioRepository em uma única transação.
 
     Commit é explícito — chamar uow.commit() é obrigatório para persistir.
     Sair do bloco `with` sem commit() reverte tudo.
@@ -44,8 +50,12 @@ class UnitOfWork:
         self.audit: Optional[AuditRepository] = None
         self.periodos: Optional[PeriodoContabilRepository] = None
         self.centros_custo: Optional[CentroCustoRepository] = None
+        self.contas_contabeis: Optional[ContaContabilRepository] = None
         self.usuarios: Optional[UsuarioRepository] = None
         self.transacoes_bancarias: Optional[TransacaoBancariaRepository] = None
+        self.cartoes_credito: Optional[CartaoCreditoRepository] = None
+        self.faturas_cartao: Optional[FaturaCartaoRepository] = None
+        self.pagamentos_faturas_cartao: Optional[PagamentoFaturaCartaoRepository] = None
 
     def __enter__(self) -> "UnitOfWork":
         self._session = self._session_factory._session_factory()
@@ -56,8 +66,12 @@ class UnitOfWork:
         self.audit = AuditRepository(self._session)
         self.periodos = PeriodoContabilRepository(self._session)
         self.centros_custo = CentroCustoRepository(self._session)
+        self.contas_contabeis = ContaContabilRepository(self._session)
         self.usuarios = UsuarioRepository(self._session)
         self.transacoes_bancarias = TransacaoBancariaRepository(self._session)
+        self.cartoes_credito = CartaoCreditoRepository(self._session)
+        self.faturas_cartao = FaturaCartaoRepository(self._session)
+        self.pagamentos_faturas_cartao = PagamentoFaturaCartaoRepository(self._session)
 
         return self
 
@@ -80,8 +94,12 @@ class UnitOfWork:
             self.audit = None
             self.periodos = None
             self.centros_custo = None
+            self.contas_contabeis = None
             self.usuarios = None
             self.transacoes_bancarias = None
+            self.cartoes_credito = None
+            self.faturas_cartao = None
+            self.pagamentos_faturas_cartao = None
 
     def commit(self) -> None:
         """Confirma todas as operações realizadas nos repositórios desta UoW."""

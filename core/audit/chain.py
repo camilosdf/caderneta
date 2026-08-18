@@ -37,6 +37,8 @@ class TipoEvento(StrEnum):
     ERRO_SISTEMA             = "ERRO_SISTEMA"
     USUARIO_LOGIN            = "USUARIO_LOGIN"
     USUARIO_LOGOUT           = "USUARIO_LOGOUT"
+    # ADR 007 — Política de Versionamento (transição v0.999 -> v1.0.0)
+    VERSAO_HOMOLOGADA        = "VERSAO_HOMOLOGADA"
     # Etapa 8 — Motor de Conciliação Bancária
     CONCILIACAO_INICIADA     = "CONCILIACAO_INICIADA"
     MATCH_IDENTIFICADO       = "MATCH_IDENTIFICADO"
@@ -45,6 +47,10 @@ class TipoEvento(StrEnum):
     CONCILIACAO_APROVADA     = "CONCILIACAO_APROVADA"
     CONCILIACAO_REJEITADA    = "CONCILIACAO_REJEITADA"
     EXTRATO_IMPORTADO        = "EXTRATO_IMPORTADO"
+    # ADR 010 — Faturas de Cartão de Crédito (Fase 4)
+    FATURA_CARTAO_RECEBIDA         = "FATURA_CARTAO_RECEBIDA"
+    FATURA_CARTAO_FECHADA          = "FATURA_CARTAO_FECHADA"
+    PAGAMENTO_CARTAO_IDENTIFICADO  = "PAGAMENTO_CARTAO_IDENTIFICADO"
 
 
 @dataclass

@@ -9,7 +9,7 @@ PolicyEngine + Usuario — este arquivo nunca reimplementa essa lógica,
 apenas traduz o resultado do domínio para HTTP (ADR 008 §9).
 """
 
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
@@ -112,15 +112,25 @@ def aprovar(
                        f"{lancamento.status.value}).",
             )
 
-        # criador_id vazio: lançamentos hoje são gerados pelo pipeline
-        # automatizado (CLI), não por um usuário humano via API — não há
-        # ainda um campo de "criado por" em Lancamento para comparar.
-        # Segregação de funções não tem o que verificar neste W3; revisar
-        # quando lançamentos passarem a ser criados por usuários na API.
+        # Gate 0 — B3: nível desta aprovação. aprovado_por_1 já presente
+        # significa que esta é a segunda chamada para um lançamento
+        # DOIS_APROVADORES (a primeira nunca teria deixado o status como
+        # PENDENTE se fosse UM_APROVADOR — ver Lancamento.aprovar()).
+        nivel1_ja_aprovado = lancamento.aprovado_por_1 is not None
+        nivel = 2 if nivel1_ja_aprovado else 1
+
+        # Gate 0 — D1: a autoria real do lançamento (populada pelo pipeline
+        # ou, no futuro, por criação humana autenticada) é propagada como
+        # está — nunca fabricada como "" aqui. PolicyEngine decide o que
+        # fazer com None (falha fechada) ou com uma autoria conhecida
+        # (segregação de funções). aprovador_nivel1_id habilita a
+        # segregação entre níveis (Gate 0 — B3): o mesmo ator não pode
+        # ocupar os dois níveis de uma aprovação em cascata.
         avaliacao = policy_engine.avaliar_aprovacao(
             valor_lancamento=lancamento.valor_total.valor,
             aprovador=usuario,
-            criador_id="",
+            criador_id=lancamento.criado_por,
+            aprovador_nivel1_id=lancamento.aprovado_por_1 if nivel1_ja_aprovado else None,
         )
 
         if avaliacao.resultado != ResultadoPolitica.PERMITIDO:
@@ -135,10 +145,22 @@ def aprovar(
                 detail="Justificativa obrigatória para aprovação de alto valor.",
             )
 
-        lancamento.status = StatusLancamento.APROVADO
-        lancamento.aprovado_por_1 = str(usuario.id)
-        lancamento.aprovado_em_1 = datetime.now(timezone.utc)
+        # Gate 0 — B3: a mutação de estado passa a ser feita pelo agregado
+        # (Lancamento.aprovar()), não pelo router. É essa delegação que
+        # faz DOIS_APROVADORES permanecer PENDENTE após o nível 1 —
+        # antes, o router marcava APROVADO incondicionalmente aqui,
+        # ignorando nivel_aprovacao por completo (achado reproduzido no
+        # Gate 0 antes desta correção).
+        lancamento.aprovar(str(usuario.id), nivel=nivel)
         uow.lancamentos.salvar(lancamento)
+
+        aprovacao_completa = lancamento.status == StatusLancamento.APROVADO
+        motivo_resposta = avaliacao.motivo
+        if not aprovacao_completa:
+            motivo_resposta = (
+                f"{avaliacao.motivo} Primeira aprovação registrada — "
+                f"aguardando segundo aprovador (nível 2)."
+            )
 
         uow.audit.registrar(
             tipo=TipoEvento.LANCAMENTO_APROVADO,
@@ -147,6 +169,8 @@ def aprovar(
                 "justificativa": dados.justificativa,
                 "politica_aplicada": avaliacao.politica_nome,
                 "motivo": avaliacao.motivo,
+                "nivel_aprovacao_aplicado": nivel,
+                "aprovacao_completa": aprovacao_completa,
             },
             usuario=str(usuario.id),
             empresa_id=str(usuario.empresa_id),
@@ -157,7 +181,7 @@ def aprovar(
     return DecisaoResponse(
         id=str(lancamento.id),
         status=lancamento.status.value,
-        motivo=avaliacao.motivo,
+        motivo=motivo_resposta,
     )
 
 

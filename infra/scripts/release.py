@@ -22,7 +22,55 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from core.versao import VERSAO, Versao
+from core.versao import VERSAO, Versao, versao_para_audit
+
+
+def registrar_homologacao(nova: Versao) -> None:
+    """Registra VERSAO_HOMOLOGADA na trilha de auditoria (Gate 0 — B1).
+
+    Antes desta função, o script apenas imprimia um lembrete para o
+    operador registrar manualmente o evento — nunca chamava
+    uow.audit.registrar(). A promoção para produção acontecia sem
+    nenhuma evidência correspondente na trilha imutável.
+
+    Falha fechada e propositalmente síncrona ao restante do fluxo: se o
+    evento não puder ser gravado, a promoção inteira é abortada antes de
+    qualquer arquivo ser alterado (pyproject.toml, core/versao.py) ou
+    pacote gerado — auditoria é componente crítico, não um passo
+    best-effort que pode ser pulado silenciosamente.
+    """
+    import os
+
+    from core.audit.chain import TipoEvento
+    from core.infra.db.session import SessionFactory
+    from core.infra.unit_of_work import UnitOfWork
+
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        print(
+            "\nERRO: DATABASE_URL não definida — não é possível registrar "
+            "VERSAO_HOMOLOGADA na trilha de auditoria. Promoção abortada "
+            "(nenhum arquivo foi alterado)."
+        )
+        sys.exit(1)
+
+    try:
+        factory = SessionFactory(url)
+        with UnitOfWork(factory) as uow:
+            uow.audit.registrar(
+                tipo=TipoEvento.VERSAO_HOMOLOGADA,
+                payload=versao_para_audit(nova),
+            )
+            uow.commit()
+    except Exception as e:
+        print(
+            f"\nERRO ao registrar VERSAO_HOMOLOGADA na trilha de auditoria: {e}\n"
+            f"Promoção abortada (nenhum arquivo foi alterado)."
+        )
+        sys.exit(1)
+
+    print(f"\n✅ Evento VERSAO_HOMOLOGADA registrado na trilha de auditoria "
+          f"({nova.exibicao}).")
 
 
 def ler_versao_pyproject() -> str:
@@ -146,6 +194,14 @@ def main():
         print(f"[DRY RUN] Nenhum arquivo alterado.")
         return
 
+    # Gate 0 — B1: registra a promoção na trilha de auditoria ANTES de
+    # qualquer arquivo ser alterado (pyproject.toml, core/versao.py) ou
+    # pacote gerado. Se a gravação falhar, a promoção inteira é abortada
+    # aqui — não é aceitável marcar o sistema como produção sem o evento
+    # correspondente na cadeia imutável (ver registrar_homologacao()).
+    if args.producao:
+        registrar_homologacao(nova)
+
     # Atualizar arquivos se a versão mudou
     if nova != versao_atual:
         print(f"\nAtualizando arquivos de versão...")
@@ -162,7 +218,8 @@ def main():
     print(f"   Status:   {nova.status}")
 
     if nova.e_producao:
-        print(f"\n🎉 VERSÃO DE PRODUÇÃO — registrar evento VERSAO_HOMOLOGADA no audit log.")
+        print(f"\n🎉 VERSÃO DE PRODUÇÃO — VERSAO_HOMOLOGADA já registrado "
+              f"na trilha de auditoria (Gate 0 — B1).")
 
 
 if __name__ == "__main__":

@@ -25,7 +25,8 @@ from core.domain.entities import (
     Usuario,
 )
 from core.infra.db import SessionFactory
-from core.infra.repositories import LancamentoRepository, UsuarioRepository
+from core.infra.repositories import ContaContabilRepository, LancamentoRepository, UsuarioRepository
+from core.infra.repositories.conta_contabil_repository import ContaContabilJaExisteError
 
 
 @pytest.fixture
@@ -51,13 +52,42 @@ def _usuario(sf: SessionFactory, empresa_id, papel: str, email=None, senha="Senh
     return u
 
 
-def _lancamento(sf: SessionFactory, empresa_id, valor="1000.00", status=StatusLancamento.PENDENTE) -> Lancamento:
+def _cadastrar_contas_padrao(sf: SessionFactory, empresa_id) -> None:
+    """DT-CC-01 / ADR 011, B.2.4 — a FK composta splits ->
+    contas_contabeis passou a ser exercitada de verdade aqui: o fixture
+    `client` sobe a app real via create_app()/session_factory_from_env()
+    (enforce_foreign_keys=True), e o endpoint de aprovação reescreve os
+    splits do lançamento. Os dois códigos usados por _lancamento()
+    precisam estar cadastrados antes de qualquer requisição autenticada
+    que toque o lançamento — idempotente por empresa_id (chamada uma
+    vez por _lancamento(), sempre a mesma dupla de códigos)."""
+    with sf.session() as session:
+        repo = ContaContabilRepository(session)
+        for codigo, natureza in (
+            ("4.1.01.001", NaturezaLancamento.DEBITO),
+            ("1.1.01.002", NaturezaLancamento.CREDITO),
+        ):
+            try:
+                repo.criar(empresa_id, codigo, f"Conta teste {codigo}", natureza=natureza)
+            except ContaContabilJaExisteError:
+                pass
+
+
+def _lancamento(
+    sf: SessionFactory, empresa_id, valor="1000.00", status=StatusLancamento.PENDENTE,
+    criado_por="operador", nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
+) -> Lancamento:
+    """criado_por default = "operador": representa a proveniência real que
+    o pipeline grava hoje (Gate 0 — D1). Testes que precisam do cenário de
+    origem desconhecida passam criado_por=None explicitamente."""
+    _cadastrar_contas_padrao(sf, empresa_id)
     lanc = Lancamento(
         empresa_id=empresa_id,
         descricao="Teste aprovação",
         status=status,
-        nivel_aprovacao=NivelAprovacao.UM_APROVADOR,
+        nivel_aprovacao=nivel_aprovacao,
         data_lancamento=date(2026, 6, 1),
+        criado_por=criado_por,
         splits=[
             Split(conta=CodigoConta("4.1.01.001"), natureza=NaturezaLancamento.DEBITO,
                   valor=Dinheiro(Decimal(valor))),
@@ -143,6 +173,158 @@ class TestAprovarRBAC:
             json={"justificativa": "Aprovado pelo admin"},
         )
         assert r.status_code == 200
+
+
+class TestAprovarSegregacaoFuncoes:
+    """Gate 0 — D1. Cobre o achado registrado: PolicyEngine já tinha a
+    regra, mas o único chamador em produção fabricava criador_id="",
+    que nunca coincide com um Usuario.id — a segregação nunca disparava.
+    """
+
+    def test_origem_desconhecida_bloqueia_aprovacao(self, sf, client) -> None:
+        """criado_por=None (falha fechada) — nenhum aprovador é aceito,
+        independentemente do papel."""
+        empresa_id = uuid4()
+        _usuario(sf, empresa_id, "contador")
+        lanc = _lancamento(sf, empresa_id, criado_por=None)
+
+        _login(client, "contador@x.com")
+        r = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r.status_code == 403
+        assert "não pode ser autorizada" in r.json()["detail"] or "identificada" in r.json()["detail"]
+
+    def test_criador_nao_pode_aprovar_proprio_lancamento(self, sf, client) -> None:
+        """Cenário que a ausência de criado_por mascarava: o mesmo ator
+        que criou o lançamento tenta aprová-lo."""
+        empresa_id = uuid4()
+        contador = _usuario(sf, empresa_id, "contador")
+        lanc = _lancamento(sf, empresa_id, criado_por=str(contador.id))
+
+        _login(client, "contador@x.com")
+        r = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r.status_code == 403
+        assert "mesmo aprovador" in r.json()["detail"]
+
+    def test_lancamento_de_pipeline_aprovavel_por_qualquer_contador(self, sf, client) -> None:
+        """criado_por = proveniência do pipeline (não identidade
+        autenticada) — nunca coincide com o UUID de um aprovador humano,
+        então a aprovação segue permitida."""
+        empresa_id = uuid4()
+        _usuario(sf, empresa_id, "contador")
+        lanc = _lancamento(sf, empresa_id, criado_por="operador")
+
+        _login(client, "contador@x.com")
+        r = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r.status_code == 200
+        assert r.json()["status"] == "aprovado"
+
+
+class TestAprovarCascata:
+    """Gate 0 — B3. Reproduzido antes da correção: o router mutava
+    status/aprovado_por_1 diretamente, sem chamar Lancamento.aprovar() —
+    DOIS_APROVADORES era finalizado com uma única aprovação, e nada
+    impedia o mesmo ator de ocupar os dois níveis. Testes aqui passam
+    pela rota HTTP real (não só pelo método de domínio isolado), porque
+    foi exatamente essa fronteira que produziu o defeito.
+    """
+
+    def test_um_aprovador_finaliza_com_uma_aprovacao(self, sf, client) -> None:
+        empresa_id = uuid4()
+        _usuario(sf, empresa_id, "contador")
+        lanc = _lancamento(sf, empresa_id, nivel_aprovacao=NivelAprovacao.UM_APROVADOR)
+
+        _login(client, "contador@x.com")
+        r = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r.status_code == 200
+        assert r.json()["status"] == "aprovado"
+
+    def test_dois_aprovadores_uma_aprovacao_nao_finaliza(self, sf, client) -> None:
+        """O cenário reproduzido no Gate 0: antes da correção, esta
+        chamada sozinha resultava em status=aprovado."""
+        empresa_id = uuid4()
+        _usuario(sf, empresa_id, "contador", email="x@x.com")
+        lanc = _lancamento(sf, empresa_id, nivel_aprovacao=NivelAprovacao.DOIS_APROVADORES)
+
+        _login(client, "x@x.com")
+        r = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r.status_code == 200
+        assert r.json()["status"] != "aprovado"
+        assert r.json()["status"] == "pendente"
+
+        with sf.session() as session:
+            persistido = LancamentoRepository(session).buscar_por_id(lanc.id)
+        assert persistido.status == StatusLancamento.PENDENTE
+        assert persistido.aprovado_por_1 is not None
+        assert persistido.aprovado_por_2 is None
+
+    def test_dois_aprovadores_segundo_aprovador_distinto_finaliza(self, sf, client) -> None:
+        empresa_id = uuid4()
+        _usuario(sf, empresa_id, "contador", email="x@x.com")
+        _usuario(sf, empresa_id, "supervisor", email="y@x.com")
+        lanc = _lancamento(sf, empresa_id, nivel_aprovacao=NivelAprovacao.DOIS_APROVADORES)
+
+        _login(client, "x@x.com")
+        r1 = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r1.status_code == 200
+        assert r1.json()["status"] == "pendente"
+
+        _login(client, "y@x.com")
+        r2 = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "aprovado"
+
+        with sf.session() as session:
+            persistido = LancamentoRepository(session).buscar_por_id(lanc.id)
+        assert persistido.status == StatusLancamento.APROVADO
+        assert persistido.aprovado_por_1 is not None
+        assert persistido.aprovado_por_2 is not None
+        assert persistido.aprovado_por_1 != persistido.aprovado_por_2
+
+    def test_mesmo_aprovador_nos_dois_niveis_e_negado(self, sf, client) -> None:
+        """Gap identificado na revisão: sem esta checagem, corrigir só a
+        cascata permitiria o mesmo contador satisfazer os dois níveis
+        clicando duas vezes."""
+        empresa_id = uuid4()
+        _usuario(sf, empresa_id, "contador", email="x@x.com")
+        lanc = _lancamento(sf, empresa_id, nivel_aprovacao=NivelAprovacao.DOIS_APROVADORES)
+
+        _login(client, "x@x.com")
+        r1 = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r1.status_code == 200
+        assert r1.json()["status"] == "pendente"
+
+        r2 = client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+        assert r2.status_code == 403
+        assert "dois níveis" in r2.json()["detail"]
+
+        with sf.session() as session:
+            persistido = LancamentoRepository(session).buscar_por_id(lanc.id)
+        assert persistido.status == StatusLancamento.PENDENTE
+        assert persistido.aprovado_por_2 is None
+
+    def test_rejeicao_apos_aprovacao_parcial(self, sf, client) -> None:
+        """O estado intermediário de DOIS_APROVADORES (nível 1 aprovado,
+        aguardando nível 2) não deve poder ser convertido por outro
+        caminho — rejeição continua disponível e definitiva."""
+        empresa_id = uuid4()
+        _usuario(sf, empresa_id, "contador", email="x@x.com")
+        _usuario(sf, empresa_id, "supervisor", email="y@x.com")
+        lanc = _lancamento(sf, empresa_id, nivel_aprovacao=NivelAprovacao.DOIS_APROVADORES)
+
+        _login(client, "x@x.com")
+        client.post(f"/lancamentos/{lanc.id}/aprovar", json={})
+
+        _login(client, "y@x.com")
+        r = client.post(
+            f"/lancamentos/{lanc.id}/rejeitar",
+            json={"justificativa": "Divergência encontrada após primeira aprovação"},
+        )
+        assert r.status_code == 200
+        assert r.json()["status"] == "rejeitado"
+
+        with sf.session() as session:
+            persistido = LancamentoRepository(session).buscar_por_id(lanc.id)
+        assert persistido.status == StatusLancamento.REJEITADO
 
 
 class TestAprovarValidacoes:

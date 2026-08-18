@@ -176,6 +176,50 @@ class FeedbackRegistrado(BaseEvento):
 
 
 # =============================================================
+# ADR 010 — FATURAS DE CARTÃO DE CRÉDITO (Fase 4)
+# =============================================================
+
+@dataclass(frozen=True)
+class FaturaCartaoRecebida(BaseEvento):
+    """Fatura de cartão extraída com sucesso (Fase 2) e persistida
+    (D13) — paralelo a DocumentoParseado, mas específico do agregado
+    FaturaCartao (D1/D3)."""
+    documento_id: str = ""
+    fatura_id: str = ""
+    cartao_id: str = ""
+    hash_sha256: str = ""
+    tipo_documento: str = ""
+    periodo_referencia: str = ""
+    valor_total_declarado: str = ""
+    n_itens: int = 0
+    n_itens_baixa_confianca: int = 0
+
+
+@dataclass(frozen=True)
+class FaturaCartaoFechada(BaseEvento):
+    """FaturaCartao.validar_fechamento() resultou em FECHADA (D5) —
+    fatura pronta para gerar lançamentos (D7/D8). Renomeado do esboço
+    original 'FaturaCartaoClassificada' — não há passo de classificação
+    (ClassificationPort) no pipeline de fatura; o conceito real é o
+    fechamento validado (ver ADR 010, fechamento de B5)."""
+    fatura_id: str = ""
+    status_fechamento: str = ""
+    valor_total_declarado: str = ""
+    soma_itens_calculada: str = ""
+
+
+@dataclass(frozen=True)
+class PagamentoCartaoIdentificado(BaseEvento):
+    """Motor de conciliação casou uma TransacaoBancaria ao Lancamento
+    de pagamento de uma fatura (D8). Catalogado nesta fase — disparo
+    fica para a Fase de conciliação (fora do escopo desta etapa)."""
+    fatura_id: str = ""
+    lancamento_pagamento_id: str = ""
+    transacao_bancaria_id: str = ""
+    metodo_matching: str = ""
+
+
+# =============================================================
 # PORT DE BARRAMENTO DE EVENTOS (injetado via DI)
 # =============================================================
 

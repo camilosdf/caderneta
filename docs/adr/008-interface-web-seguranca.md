@@ -309,8 +309,30 @@ precisar buscar o papel de volta no banco a cada chamada.
 impedir que um `contador` aprove um lançamento que ele mesmo criou) é
 responsabilidade do domínio (`PolicyEngine`), não da API. A API garante
 apenas que a identidade completa e correta chegue ao domínio para essa
-checagem ser possível — se o domínio ainda não implementa essa checagem
-hoje, isso é um débito técnico do domínio, não desta camada.
+checagem ser possível.
+
+> **Atualização (Gate 0 — Item D1, Opção B implementada):** o débito
+> técnico descrito acima foi resolvido. `Lancamento.criado_por` passa a
+> existir e ser propagado — pelo pipeline (`cmd.usuario`, proveniência
+> operacional, não identidade autenticada) e, no futuro, por criação
+> humana autenticada via API (`usuario.id`). `api/routers/lancamentos.py`
+> não fabrica mais `criador_id=""`; propaga `lancamento.criado_por` como
+> está. `PolicyEngine.avaliar_aprovacao()` passou a aceitar
+> `criador_id: str | None` e nega aprovação por falha fechada
+> (`politica_nome="origem_desconhecida"`) quando a autoria é `None` —
+> distinto da política `segregacao_funcoes`, que exige uma identidade
+> conhecida para comparar. Migration `a77d15a0adcc` adiciona a coluna e
+> faz backfill controlado (`criado_por='origem:legado'`) apenas para
+> lançamentos `PENDENTE` pré-existentes, sem afirmar uma origem de
+> pipeline que não foi confirmada contra os dados reais da base.
+>
+> Ressalva que permanece válida: `cmd.usuario` (CLI, `--usuario`) é texto
+> livre, sem validação contra a tabela `usuarios` — não é identidade
+> autenticada. A proteção efetiva de segregação de funções (impedir
+> autoaprovação por um humano autenticado) só passa a ter caso de uso real
+> quando existir criação de lançamento via API por usuário autenticado —
+> fluxo ainda não implementado. Até lá, `criado_por` do pipeline serve
+> como proveniência auditável, não como controle de acesso ativo.
 
 **Mapeamento de exceções de domínio para HTTP:** exceções de
 autorização/validação do domínio são traduzidas para códigos HTTP na

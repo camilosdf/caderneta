@@ -17,8 +17,11 @@ from core.infra.db.session import Base  # noqa: F401
 # Importar modelos para registrá-los na Base
 from core.infra.db.models import (  # noqa: F401
     AuditEventoORM,
+    CartaoCreditoORM,
     CentroCustoORM,
+    CompraCartaoORM,
     DocumentoORM,
+    FaturaCartaoORM,
     LancamentoORM,
     PeriodoContabilORM,
     SplitORM,

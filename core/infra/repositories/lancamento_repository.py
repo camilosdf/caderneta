@@ -111,6 +111,7 @@ def _para_orm(lanc: Lancamento, orm: LancamentoORM) -> None:
     orm.status = lanc.status.value
     orm.nivel_aprovacao = lanc.nivel_aprovacao.value if lanc.nivel_aprovacao else None
     orm.pre_aprovado = lanc.pre_aprovado
+    orm.criado_por = lanc.criado_por
     orm.aprovado_por_1 = lanc.aprovado_por_1
     orm.aprovado_em_1 = lanc.aprovado_em_1
     orm.aprovado_por_2 = lanc.aprovado_por_2
@@ -119,7 +120,9 @@ def _para_orm(lanc: Lancamento, orm: LancamentoORM) -> None:
     orm.exportado_em = lanc.exportado_em
 
     # Substitui splits existentes pelos atuais
-    orm.splits = [_split_para_orm(s, str(lanc.id)) for s in lanc.splits]
+    orm.splits = [
+        _split_para_orm(s, str(lanc.id), str(lanc.empresa_id)) for s in lanc.splits
+    ]
 
 
 def _para_dominio(orm: LancamentoORM) -> Lancamento:
@@ -145,6 +148,7 @@ def _para_dominio(orm: LancamentoORM) -> Lancamento:
         status=StatusLancamento(orm.status),
         nivel_aprovacao=NivelAprovacao(orm.nivel_aprovacao) if orm.nivel_aprovacao else None,
         pre_aprovado=orm.pre_aprovado,
+        criado_por=orm.criado_por,
         aprovado_por_1=orm.aprovado_por_1,
         aprovado_em_1=orm.aprovado_em_1,
         aprovado_por_2=orm.aprovado_por_2,
@@ -156,10 +160,16 @@ def _para_dominio(orm: LancamentoORM) -> Lancamento:
     return lanc
 
 
-def _split_para_orm(split: Split, lancamento_id: str) -> SplitORM:
+def _split_para_orm(split: Split, lancamento_id: str, empresa_id: str) -> SplitORM:
+    # DT-CC-01 / ADR 011 (B.2.2) — empresa_id é sempre derivado do
+    # Lancamento pai, nunca um parâmetro independente vindo de Split
+    # (que continua sem empresa_id no domínio, por decisão explícita —
+    # ver ADR 011). Este é o único ponto de construção de SplitORM no
+    # sistema; não há outro caminho de escrita a auditar.
     return SplitORM(
         id=str(split.id),
         lancamento_id=lancamento_id,
+        empresa_id=empresa_id,
         conta_codigo=split.conta.codigo,
         natureza=split.natureza.value,
         valor=split.valor.valor,

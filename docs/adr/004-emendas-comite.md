@@ -188,3 +188,55 @@ Deliberação Gate 0.
 
 **Data:** 2026-08
 **Aprovado por:** Proprietário do Produto (Camilo)
+
+---
+
+## Emenda E-14 — Deliberação formal do Item D2: `VERSAO_ATUAL` para `0.9.1`
+
+**Data da emenda:** 2026-08-18
+
+**Problema identificado:** O Item D2 da Pauta de Deliberação Gate 0
+(`docs/caderneta_pauta_deliberacao_gate0_v2.docx`) registrou formalmente,
+com proposta e consequências redigidas, a necessidade de atualizar
+`VERSAO_ATUAL` para refletir entregas reais — sem decisão marcada. A
+Emenda E-13 registrou a conclusão das Etapas 6–8 mas manteve
+`VERSAO_ATUAL = "0.9.0"` explicitamente até essa deliberação formal do
+D2. Desde então, a branch `feature/cartao-credito` (não mesclada em
+`main`) entregou, adicionalmente: ADR 010 completo (Fases 0–6, cartão de
+crédito) e DT-CC-01/plano B.2 (ADR 011), regularizado em
+`docs/adr/regularizacao-governanca-adr011-dtcc01-b2.md`. Nenhuma dessas
+entregas está refletida em `VERSAO_ATUAL`.
+
+**Decisão (Item D2 — APROVADA):**
+
+1. **Dígito `ETAPA`:** permanece `9`. Pela regra já fixada em E-12, esse
+   dígito reflete "a etapa de maior valor de negócio efetivamente
+   entregue", não a mais alta com conclusão contígua. Nenhuma das
+   entregas deste ciclo (Etapas 6–8, cartão de crédito, DT-CC-01/B.2)
+   introduz uma etapa numericamente superior a 9 no esquema de 10 etapas
+   do ADR 007 — cartão de crédito, em particular, não é uma das 10
+   etapas; toca Parsers, Motor Contábil, Conciliação e Integrações, sem
+   superar o valor já registrado pela Etapa 9 (GnuCash).
+2. **Dígito `REVISÃO`:** incrementa de `0` para `1`. Registra-se uma
+   única revisão acumulada desde a declaração original de `0.9.0`,
+   cobrindo em conjunto: o estado já alcançado pelas Etapas 6–8
+   (Interface Web, IA como Plugin, Conciliação Bancária — E-13), as
+   entregas de cartão de crédito (ADR 010, Fases 0–6) e DT-CC-01/B.2
+   (ADR 011). Optou-se deliberadamente por **não fabricar** uma
+   sequência histórica `0.9.1 → 0.9.2` que nunca existiu — E-13 nunca
+   incrementou revisão nenhuma, permanecendo em `0.9.0` até agora.
+3. **`VERSAO_ATUAL` resultante:** `"0.9.1"`.
+
+**Pendência de aplicação em código:** esta emenda registra a decisão de
+governança. `core/versao.py:20` (`VERSAO_ATUAL = "0.9.0"`) e
+`pyproject.toml` (versão sincronizada, ver comentário em `versao.py`)
+**não foram alterados** por esta emenda — a atualização do código é ação
+separada, deliberadamente não incluída neste commit exclusivamente
+documental, pendente de autorização explícita.
+
+**Escopo não decidido por esta emenda:** o Item D3 (qualidade do código —
+Ruff) é tratado em documento próprio
+(`docs/adr/deliberacao-d2-d3-gate0-pos-cartao.md`), não nesta emenda.
+
+**Data:** 2026-08-18
+**Aprovado por:** Proprietário do Produto (Camilo)
