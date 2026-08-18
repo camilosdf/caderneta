@@ -1,7 +1,7 @@
 # ADR 011 — Persistência de `ContaContabil` (DT-CC-01)
 
-**Status:** Em aberto — decisão pendente entre Opção A e Opção B (ver Seção "Decisão"). Nenhuma implementação autorizada por este documento.
-**Data:** 2026-08
+**Status:** Decidido e implementado — Opção B, plano de execução B.2 (B.2.1–B.2.4). Ver `docs/adr/regularizacao-governanca-adr011-dtcc01-b2.md` para o registro formal da decisão e da regularização de governança — este documento (Contexto/DT-CC-01.2/DT-CC-01.3/Decisão abaixo) permanece **inalterado como registro histórico** do estado em que a decisão estava pendente; não reescreve retroativamente a Seção "Decisão" original.
+**Data:** 2026-08 (registro original) — regularizado em 2026-08-18
 **Decisores:** Direção do projeto
 **Origem:** DT-CC-01 (ADR 010, Seção "Débito técnico registrado — DT-CC-01"), aprofundado em `docs/adr/revisao-deliberativa-dtcc-d18.md`, na inspeção formal DT-CC-01.1 (branch `feature/cartao-credito`, HEAD `e710d63`), no inventário de código-fonte DT-CC-01.2 e no achado de estado de produção DT-CC-01.3 (ambos abaixo).
 **Branch:** `feature/cartao-credito` — não mesclado em `main`
