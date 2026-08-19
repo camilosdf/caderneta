@@ -4,17 +4,23 @@ Plataforma modular para automação de lançamentos contábeis com foco no merca
 fiscal brasileiro (NF-e/CFOP/CST, OFX, SPED, ICMS/PIS/COFINS,
 Simples Nacional / Lucro Presumido / Lucro Real).
 
-**Status:** pré-produção (`0.x.x`) — Gate 0 de Homologação em andamento.  
-**Testes:** 668 passando · **Cobertura:** 93% · **Isolamento Core/AI/API:** verificado em CI.
+**Status:** pré-produção (`0.9.1`) — Gate 0 de Homologação **fechado**
+(`docs/adr/gate0-fechamento-pre-tag.md`); tag `v0.999.0` ainda não criada.  
+**Testes:** suíte com mais de 1000 casos (`tests/unit/`) — 1 falha ambiental
+conhecida e documentada (bloqueio de rede a huggingface.co em
+`tests/unit/ai/test_sentence_transformer_provider.py`), sem outras falhas
+observadas. **Isolamento Core/AI/API:** verificado por script dedicado
+(`infra/scripts/verificar_isolamento.py`), executado manualmente — o
+repositório não possui pipeline de CI configurado (sem `.github/workflows/`).
 
 ---
 
 ## O que o sistema faz
 
-1. **Lê** extratos OFX, notas fiscais XML e CSVs bancários (Inter, Itaú, Nubank, Bradesco, Santander)
+1. **Lê** extratos OFX, notas fiscais XML, CSVs bancários (Inter, Itaú, Nubank, Bradesco, Santander) e faturas de cartão de crédito em PDF (ADR 010)
 2. **Classifica** lançamentos automaticamente via regras determinísticas → embeddings semânticos → LLM como desambiguador (IA auxiliar, nunca decisor)
 3. **Gera** CSV no formato GnuCash para importação manual
-4. **Concilia** lançamentos aprovados contra o extrato bancário OFX
+4. **Concilia** lançamentos aprovados contra o extrato bancário OFX, incluindo o pagamento agregado de faturas de cartão contra a conta bancária
 5. **Mantém** trilha de auditoria imutável (hash chain) de todas as operações
 6. **Expõe** fila de aprovação via Interface Web (FastAPI + HTMX) para aprovação/rejeição pelo contador
 
@@ -33,12 +39,16 @@ caderneta/
 │   │   ├── nfe/                   #   XML NF-e (CFOP, NCM, CST, tributos)
 │   │   ├── csv/                   #   Nubank, Inter, Itaú, Bradesco, Santander
 │   │   ├── ofx.py                 #   Extratos OFX/QFX
+│   │   ├── pdf/                   #   Faturas de cartão (ADR 010, ex.: Nubank)
 │   │   ├── detector.py            #   Detecção de tipo por conteúdo
 │   │   └── adapters.py            #   ParserProtocol — interface comum
 │   ├── pipeline/
 │   │   └── parser_factory.py      # Resolve TipoDocumento → Parser
 │   ├── application/
-│   │   └── use_cases/             # ProcessarDocumentoUseCase (orquestração)
+│   │   └── use_cases/             # ProcessarDocumentoUseCase (orquestração);
+│   │                              #   processar/gerar-lançamentos/conciliar-
+│   │                              #   pagamento/persistir-conciliação de
+│   │                              #   fatura de cartão (ADR 010)
 │   ├── rule_engine/               # Motor Contábil
 │   │   ├── classification_impl.py #   Classificação por regras determinísticas
 │   │   ├── lancamento_service.py  #   Constrói/valida/persiste Lancamento
@@ -53,7 +63,8 @@ caderneta/
 │   ├── infra/                     # Persistência (SQLAlchemy 2)
 │   │   ├── db/                    #   Base ORM, SessionFactory, modelos
 │   │   ├── repositories/          #   Documento, Lancamento, Audit, Período,
-│   │   │                          #   Centro de Custo, Usuario, TransacaoBancaria
+│   │   │                          #   Centro de Custo, Usuario, TransacaoBancaria,
+│   │   │                          #   CartaoCredito, ContaContabil (DT-CC-01/B.2)
 │   │   └── unit_of_work.py        #   Transação única multi-repositório
 │   ├── policies/                  # Regras de aprovação (PolicyEngine + RBAC)
 │   └── cli.py                     # Interface de linha de comando (Typer)
@@ -91,15 +102,18 @@ caderneta/
 │   ├── migrations/                # Alembic (env.py, versions/)
 │   ├── docker/                    # docker-compose.yml
 │   └── scripts/
-│       ├── verificar_isolamento.py       # CI: core/ nunca importa ai/ nem api/
-│       ├── verificar_testes_hermeticos.py # CI: testes unitários sem rede/banco real
-│       └── verificar_endpoints_auth.py   # CI: toda rota exige autenticação
+│       ├── verificar_isolamento.py       # core/ nunca importa ai/ nem api/
+│       ├── verificar_testes_hermeticos.py # testes unitários sem rede/banco real
+│       └── verificar_endpoints_auth.py   # toda rota exige autenticação (execução manual — sem CI)
 │
 ├── docs/
-│   └── adr/                       # 8 ADRs (001–008)
+│   └── adr/                       # ADRs numerados (001–008, 010, 011) +
+│                                  #   deliberações/registros de governança
+│                                  #   complementares (24 arquivos no total)
 │
 └── tests/
-    └── unit/                      # 668 testes — core, ai, api, conciliação
+    └── unit/                      # Suíte com mais de 1000 casos — core, ai,
+                                    #   api, conciliação, cartão de crédito
 ```
 
 ---
@@ -108,7 +122,8 @@ caderneta/
 
 **1. Core nunca importa AI nem API.**  
 `core/` funciona completamente sem modelos de linguagem, GPU ou servidor web.
-Verificado em CI via `infra/scripts/verificar_isolamento.py` (análise AST de imports).
+Verificado via `infra/scripts/verificar_isolamento.py` (análise AST de
+imports), execução manual — sem pipeline de CI configurado no repositório.
 
 **2. AI implementa contratos do Core.**  
 Os plugins em `ai/` implementam os `Protocol`s definidos em `core/ports/`.
@@ -199,6 +214,15 @@ python -m core.cli conciliacao listar   --empresa 12345678000190 --periodo 2026-
 # Auditoria
 python -m core.cli verificar-integridade --empresa 12345678000190
 python -m core.cli status --empresa 12345678000190
+
+# Cartão de crédito (ADR 010)
+python -m core.cli cartao importar fatura.pdf --empresa 12345678000190 \
+    --emissor Nubank --final 1234 --titular "João Silva" --conta 2.1.05.001
+python -m core.cli cartao listar --empresa 12345678000190
+python -m core.cli cartao gerar-lancamentos <fatura_id> --empresa 12345678000190 \
+    --conta-cartao 2.1.05.001 --conta-banco 1.1.01.001 --conta-compra 4.1.01.001
+python -m core.cli cartao conciliar-pagamento <fatura_id> --empresa 12345678000190 \
+    --periodo 2026-07
 ```
 
 ---
@@ -217,16 +241,24 @@ python -m core.cli status --empresa 12345678000190
 | **6 — Interface Web** | FastAPI + HTMX (W1–W4), RBAC, SessionMiddleware | ✅ `v0.010.000–v0.012.001` |
 | **7 — IA como Plugin** | Embeddings, OCR, LLM, ClassifierOrchestrator (3 camadas) | ✅ `v0.013.000–v0.013.004` |
 | **8 — Conciliação Bancária** | MotorConciliacao, OFXBankStatementAdapter, CLI conciliacao | ✅ `v0.014.000–v0.014.003` |
-| **Homologação** | Gate 0 em andamento — ver `docs/adr/007` | 🔄 |
+| **Cartão de Crédito** | Fatura PDF, `CartaoCredito`/`ContaContabil` (DT-CC-01/B.2), geração e conciliação de lançamentos (ADR 010, ADR 011) | ✅ |
+| **Homologação** | Gate 0 **fechado** — ver `docs/adr/gate0-fechamento-pre-tag.md` | ✅ |
 
-> **Nota (Emenda E-13, ADR 004):** as Etapas 6, 7 e 8 foram concluídas em agosto de 2026.
-> O sistema está em Gate 0 de Pré-Homologação: 2 bloqueadores técnicos identificados,
-> 7 itens de decisão em deliberação com o Contador CRC e Especialista em Controles Internos.
-> Congelamento em `v0.999` após resolução de todos os itens.
+> **Nota (Emenda E-14, ADR 004):** Gate 0 de Pré-Homologação fechado em
+> 2026-08-18 (`docs/adr/gate0-fechamento-pre-tag.md`) — bloqueadores de
+> promoção resolvidos ou formalmente retirados da condição de bloqueio.
+> Pendências pós-merge com prazo (benchmark de embedding, testes de
+> propriedade, evidência externa de parecer contábil D12/D19) e uma
+> dependência externa (validação de cartão contra fatura real, B3)
+> permanecem monitoradas — ver `docs/adr/pauta-deliberacao-residual-gate0.md`.
+> Congelamento em `v0.999.0` é deliberação separada, ainda não realizada.
 
 ---
 
-## Verificadores automatizados (CI)
+## Verificadores de arquitetura
+
+Scripts em `infra/scripts/`, executados manualmente (o repositório não
+possui pipeline de CI configurado — sem `.github/workflows/`):
 
 | Script | O que garante |
 |---|---|
@@ -240,7 +272,10 @@ python -m core.cli status --empresa 12345678000190
 
 | Documento | Localização |
 |---|---|
-| ADRs (001–008) | `docs/adr/` |
-| Manual do Protótipo | entregue separadamente (`caderneta_manual_prototipo_v2.docx`) |
-| Matriz de Prontidão v0.999 | entregue separadamente (`caderneta_matriz_prontidao_v0999.docx`) |
-| Pauta de Deliberação Gate 0 | entregue separadamente (`caderneta_pauta_deliberacao_gate0_v2.docx`) |
+| ADRs numerados (001–008, 010, 011) | `docs/adr/` |
+| Deliberações e registros de governança complementares (D2–D19, DT-CC-01, regressões corrigidas) | `docs/adr/` (não numerados, nome descritivo) |
+| Fechamento formal do Gate 0 | `docs/adr/gate0-fechamento-pre-tag.md` |
+| Procedimento de backup/recuperação (D4) | `docs/procedimento-backup-recuperacao.md` |
+| Manual do Protótipo | `docs/caderneta_manual_prototipo_v2.docx` |
+| Matriz de Prontidão v0.999 | `docs/caderneta_matriz_prontidao_v0999.docx` |
+| Pauta de Deliberação Gate 0 (original) | `docs/caderneta_pauta_deliberacao_gate0_v2.docx` |
