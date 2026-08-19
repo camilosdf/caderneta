@@ -7,11 +7,11 @@ build-backend = "hatchling.build"
 # =============================================================
 [project]
 name = "caderneta"
-version = "0.9.0"
+version = "0.9.1"
 # Versionamento: FASE.ETAPA.REVISÃO — veja ADR 007
 # 0 = pré-produção | 9 = Etapa 9 (Integração GnuCash, concluída fora de
-# ordem — ver Emenda E-12 no ADR 004) | 0 = primeira revisão
-# Etapas 6 (Interface Web), 7 (IA) e 8 (Conciliação avançada) pendentes.
+# ordem — ver Emenda E-12 no ADR 004) | 1 = revisão acumulada (Emenda
+# E-14: Etapas 6-8 concluídas por E-13, cartão de crédito ADR 010, DT-CC-01/B.2 ADR 011)
 # Exibição formatada: v0.009.000
 # Produção inicia em v1.000.000 — aprovação formal do CRC obrigatória
 description = "Plataforma modular de automação contábil com IA"
