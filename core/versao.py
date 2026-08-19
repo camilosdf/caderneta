@@ -17,7 +17,7 @@ from dataclasses import dataclass
 # Etapa 9 (Integração GnuCash) concluída fora de ordem — ver Emenda E-12
 # (ADR 004). Etapas 6 (Interface Web), 7 (IA) e 8 (Conciliação avançada)
 # permanecem pendentes apesar do dígito ETAPA=9.
-VERSAO_ATUAL = "0.9.0"
+VERSAO_ATUAL = "0.9.1"
 
 
 @dataclass(frozen=True)
