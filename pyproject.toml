@@ -39,7 +39,6 @@ core = [
     "alembic>=1.13.0",
     "lxml>=4.9.0",
     "ofxparse>=0.21",
-    "pymupdf>=1.23.0",
     "pdfplumber>=0.10.0",
     "python-magic>=0.4.27",
     "typer>=0.9.0",
@@ -156,7 +155,6 @@ module = [
     "paddleocr.*",
     "paddle.*",
     "cv2.*",
-    "fitz.*",
     "pdfplumber.*",
     "magic.*",
 ]
